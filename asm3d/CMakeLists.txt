@@ -27,8 +27,16 @@ set(A3_COMMON_FLAGS -ffp-contract=off -fno-strict-aliasing -fno-math-errno)
 
 file(GLOB A3_CORE_SOURCES CONFIGURE_DEPENDS engine/core/*.c)
 list(REMOVE_ITEM A3_CORE_SOURCES ${CMAKE_SOURCE_DIR}/engine/core/a3_simd_wasm.c)
+# Platform-independent engine modules (compiled for native and wasm)
+file(GLOB A3_SHARED_SOURCES CONFIGURE_DEPENDS
+  engine/ecs/*.c
+  engine/scene/*.c
+  engine/input/*.c
+  engine/render/a3_mesh.c
+)
 set(A3_ENGINE_SOURCES
   ${A3_CORE_SOURCES}
+  ${A3_SHARED_SOURCES}
   engine/platform/platform_posix.c
   engine/jobs/a3_jobs.c
 )
@@ -51,6 +59,7 @@ file(GLOB A3_TEST_SOURCES CONFIGURE_DEPENDS tests/*.c)
 add_executable(asm3d_tests ${A3_TEST_SOURCES})
 target_link_libraries(asm3d_tests PRIVATE asm3d_engine)
 target_compile_options(asm3d_tests PRIVATE ${A3_WARNINGS})
+target_compile_definitions(asm3d_tests PRIVATE A3_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 enable_testing()
 add_test(NAME native_tests COMMAND asm3d_tests)
 
@@ -67,7 +76,7 @@ if(ASM3D_BUILD_WASM)
     set(A3_WASM_LDFLAGS -fuse-ld=${A3_WASM_LD} -Wl,--no-entry -Wl,--export-dynamic
         -Wl,--allow-undefined -Wl,--gc-sections -Wl,-z,stack-size=1048576 -Wl,--initial-memory=4194304 -Wl,--strip-all)
     set(A3_WASM_ENGINE_SOURCES ${A3_CORE_SOURCES} ${CMAKE_SOURCE_DIR}/engine/core/a3_simd_wasm.c
-        ${CMAKE_SOURCE_DIR}/engine/platform/platform_web.c ${CMAKE_SOURCE_DIR}/engine/jobs/a3_jobs.c)
+        ${A3_SHARED_SOURCES} ${CMAKE_SOURCE_DIR}/engine/platform/platform_web.c ${CMAKE_SOURCE_DIR}/engine/jobs/a3_jobs.c)
     set(A3_WASM_TEST_OUT ${CMAKE_BINARY_DIR}/asm3d_tests.wasm)
     add_custom_command(
       OUTPUT ${A3_WASM_TEST_OUT}
