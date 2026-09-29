@@ -32,7 +32,14 @@ file(GLOB A3_SHARED_SOURCES CONFIGURE_DEPENDS
   engine/ecs/*.c
   engine/scene/*.c
   engine/input/*.c
-  engine/render/a3_mesh.c
+  engine/physics/*.c
+  engine/resource/*.c
+)
+# Renderer front-end is API independent; it talks to a backend through a3_rhi.h
+list(APPEND A3_SHARED_SOURCES
+  ${CMAKE_SOURCE_DIR}/engine/render/a3_mesh.c
+  ${CMAKE_SOURCE_DIR}/engine/render/a3_renderer.c
+  ${CMAKE_SOURCE_DIR}/engine/render/a3_shaders.c
 )
 set(A3_ENGINE_SOURCES
   ${A3_CORE_SOURCES}
@@ -41,7 +48,7 @@ set(A3_ENGINE_SOURCES
   engine/jobs/a3_jobs.c
 )
 if(A3_USE_ASM_ACTIVE)
-  list(APPEND A3_ENGINE_SOURCES engine/core/a3_simd_x64.S)
+  list(APPEND A3_ENGINE_SOURCES engine/core/a3_simd_x64.S engine/physics/a3_physics_x64.S)
 endif()
 
 add_library(asm3d_engine STATIC ${A3_ENGINE_SOURCES})
@@ -57,13 +64,8 @@ target_link_libraries(asm3d_engine PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
 # ---- Desktop runtime (window, GPU, renderer, assets, engine loop) ----
 if(UNIX AND NOT APPLE)
   find_package(X11 REQUIRED)
-  file(GLOB A3_DESKTOP_SOURCES CONFIGURE_DEPENDS
-    engine/render/*.c
-    engine/resource/*.c
-    engine/runtime/*.c
-  )
-  list(REMOVE_ITEM A3_DESKTOP_SOURCES ${CMAKE_SOURCE_DIR}/engine/render/a3_mesh.c)
-  list(APPEND A3_DESKTOP_SOURCES engine/platform/window_x11.c)
+  file(GLOB A3_DESKTOP_SOURCES CONFIGURE_DEPENDS engine/runtime/*.c)
+  list(APPEND A3_DESKTOP_SOURCES engine/platform/window_x11.c engine/render/rhi_gl.c engine/render/a3_gl.c)
   add_library(asm3d_desktop STATIC ${A3_DESKTOP_SOURCES})
   target_link_libraries(asm3d_desktop PUBLIC asm3d_engine ${X11_LIBRARIES})
   target_include_directories(asm3d_desktop PUBLIC ${X11_INCLUDE_DIR})
@@ -76,7 +78,7 @@ endif()
 
 # ---- Tests ----
 file(GLOB A3_TEST_SOURCES CONFIGURE_DEPENDS tests/*.c)
-add_executable(asm3d_tests ${A3_TEST_SOURCES})
+add_executable(asm3d_tests ${A3_TEST_SOURCES} engine/render/rhi_null.c)
 target_link_libraries(asm3d_tests PRIVATE asm3d_engine)
 target_compile_options(asm3d_tests PRIVATE ${A3_WARNINGS})
 target_compile_definitions(asm3d_tests PRIVATE A3_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
@@ -96,7 +98,8 @@ if(ASM3D_BUILD_WASM)
     set(A3_WASM_LDFLAGS -fuse-ld=${A3_WASM_LD} -Wl,--no-entry -Wl,--export-dynamic
         -Wl,--allow-undefined -Wl,--gc-sections -Wl,-z,stack-size=1048576 -Wl,--initial-memory=4194304 -Wl,--strip-all)
     set(A3_WASM_ENGINE_SOURCES ${A3_CORE_SOURCES} ${CMAKE_SOURCE_DIR}/engine/core/a3_simd_wasm.c
-        ${A3_SHARED_SOURCES} ${CMAKE_SOURCE_DIR}/engine/platform/platform_web.c ${CMAKE_SOURCE_DIR}/engine/jobs/a3_jobs.c)
+        ${A3_SHARED_SOURCES} ${CMAKE_SOURCE_DIR}/engine/platform/platform_web.c ${CMAKE_SOURCE_DIR}/engine/jobs/a3_jobs.c
+        ${CMAKE_SOURCE_DIR}/engine/render/rhi_null.c)
     set(A3_WASM_TEST_OUT ${CMAKE_BINARY_DIR}/asm3d_tests.wasm)
     add_custom_command(
       OUTPUT ${A3_WASM_TEST_OUT}
