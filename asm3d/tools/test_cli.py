@@ -134,6 +134,22 @@ try:
     check(not v["result"]["buildable"] and v["result"]["issues"][0]["line"] == 2, "validate reports script line")
     run("build", "Game", expect_ok=False)
 
+    # modeling
+    m = run("mesh", "new", "cube", "--size", "2", "--out", "Game/Assets/Models/Box.obj")["result"]["mesh"]
+    check(m["vertices"] == 8 and m["faces"] == 6 and m["closed"], "mesh new cube")
+    e = run("mesh", "edit", "Game/Assets/Models/Box.obj", "--op", "mode:face", "--op", "select-normal:0,1,0", "--op", "extrude:1",
+            "--op", "inset:0.2", "--op", "select-all", "--op", "subdivide:smooth", "--out", "Game/Assets/Models/Blob.obj")["result"]
+    check(e["steps"][2]["faces"] == 10 and e["steps"][3]["faces"] == 14, "extrude + inset steps")
+    check(e["mesh"]["closed"] and e["mesh"]["faces"] == 14 * 4, "subdivided closed mesh")
+    i = run("mesh", "info", "Game/Assets/Models/Blob.obj")["result"]
+    check(i["quad_faces"] == 56, "mesh info quads")
+    bad = run("mesh", "edit", "Game/Assets/Models/Box.obj", "--op", "extrud:1", expect_ok=False)
+    check("extrude" in bad.get("hint", ""), "unknown op suggestion")
+    run("mesh", "edit", "Game/Assets/Models/Box.obj", "--op", "extrude:1", expect_ok=False)   # nothing selected
+    check(len(run("mesh", "ops")["result"]["operations"]) >= 20, "mesh ops list")
+    run("entity", "add", scene, "Blob", "--model", "Assets/Models/Blob.obj")
+    check(run("validate", "Game")["result"]["errors"] == 1, "model reference is valid (only Bad.a3script fails)") if os.path.exists(os.path.join(tmp, "Game/Assets/Scripts/Bad.a3script")) else None
+
     # batch: one JSON line per command
     lines = run("batch", stdin="version\n# comment\nentity list \"%s\"\nnope\n" % scene)
     check(len(lines) == 3 and lines[0]["ok"] and lines[1]["ok"] and not lines[2]["ok"], "batch")

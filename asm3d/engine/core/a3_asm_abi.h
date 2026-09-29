@@ -90,6 +90,11 @@
     ARGS_PPPP
     mov     r8d, dword ptr A3_WIN_ARG(5)
 .endm
+/* (p, p, u32, p, p) -> rdi, rsi, edx, rcx, r8 */
+.macro ARGS_PPIPP
+    ARGS_PPPP
+    mov     r8, qword ptr A3_WIN_ARG(5)
+.endm
 /* (p, p, f, p, p, u32, p) -> rdi, rsi, xmm0, rdx, rcx, r8d, r9 */
 .macro ARGS_PPFPPIP
     mov     rdi, rcx
