@@ -17,6 +17,14 @@
 #include "../../engine/core/a3_format.h"
 #include "../../engine/platform/a3_platform.h"
 
+#if A3_PLATFORM_WINDOWS
+#  define EXE_SUFFIX ".exe"
+#  define TARGET_NAME "Desktop (Windows x64)"
+#else
+#  define EXE_SUFFIX ""
+#  define TARGET_NAME "Desktop (Linux x86-64)"
+#endif
+
 static u32 colr(A3Ui *ui, A3UiColor c) { return a3_ui_theme(ui)->colors[c]; }
 
 static void blog(A3Editor *ed, const char *fmt, ...) A3_PRINTF_LIKE(2, 3);
@@ -177,7 +185,7 @@ static b32 copy_visit(const char *dir, const A3DirEntry *e, void *user) {
 static b32 find_player(char *out, usize cap) {
     char dir[ED_PATH];
     if (a3_get_exe_dir(dir, sizeof(dir))) {
-        a3_path_join(out, cap, dir, "asm3d_player");
+        a3_path_join(out, cap, dir, "asm3d_player" EXE_SUFFIX);
         if (a3_file_exists(out)) return 1;
     }
     return a3_find_executable("asm3d_player", out, cap);
@@ -223,8 +231,9 @@ b32 ed_build(A3Editor *ed, b32 run_after) {
     if (a3_dir_create(data) != A3_OK) { blog(ed, "ERROR: cannot create %s", data); return 0; }
     blog(ed, "Output: %s", out);
     /* program */
-    char exe[ED_PATH];
-    a3_path_join(exe, sizeof(exe), out, name);
+    char exe[ED_PATH], exe_name[80];
+    a3_snprintf(exe_name, sizeof(exe_name), "%s" EXE_SUFFIX, name);
+    a3_path_join(exe, sizeof(exe), out, exe_name);
     if (a3_file_copy(player, exe) != A3_OK) { blog(ed, "ERROR: could not copy the player to %s", exe); return 0; }
     blog(ed, "Copied player program (%s)", a3_path_filename(player));
     /* data */
@@ -243,8 +252,8 @@ b32 ed_build(A3Editor *ed, b32 run_after) {
     blog(ed, "Packaged %u asset files (%.2f MB)", cc.files, (f64)cc.bytes / (1024.0 * 1024.0));
     char readme[1024], rp[ED_PATH];
     a3_snprintf(readme, sizeof(readme),
-        "%s\n\nMade with ASM3D %s.\n\nRun ./%s to play.\nControls: WASD to move, mouse to look (click to capture, Escape to release), Space to jump.\n",
-        ed->project_name, A3_VERSION_STRING, name);
+        "%s\n\nMade with ASM3D %s.\n\nRun %s to play.\nControls: WASD to move, mouse to look (click to capture, Escape to release), Space to jump.\n",
+        ed->project_name, A3_VERSION_STRING, exe_name);
     a3_path_join(rp, sizeof(rp), out, "README.txt");
     a3_file_write_atomic(rp, readme, a3_strlen(readme));
     a3_strcpy(ed->build_output, sizeof(ed->build_output), out);
@@ -267,10 +276,10 @@ b32 ed_build(A3Editor *ed, b32 run_after) {
 void ed_build_panel(void *user, A3Ui *ui, A3Rect r) {
     A3Editor *ed = (A3Editor *)user;
     A3_UNUSED(r);
-    static const char *const targets[] = { "Desktop (Linux x86-64)" };
+    static const char *const targets[] = { TARGET_NAME };
     static const char *const configs[] = { "Debug", "Release" };
     a3_ui_heading(ui, "Build Game");
-    a3_ui_property(ui, "Target", "Windows and macOS players are planned (docs/STATUS.md)");
+    a3_ui_property(ui, "Target", "Builds for the system the editor runs on (Windows or Linux)");
     a3_ui_combo(ui, "target", &ed->build_target, targets, A3_ARRAY_COUNT(targets));
     a3_ui_property(ui, "Configuration", "Folder name only for now: both use the player program this editor was built with");
     a3_ui_combo(ui, "config", &ed->build_config, configs, 2);

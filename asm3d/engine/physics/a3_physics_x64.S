@@ -1,6 +1,6 @@
 /*
  * ASM3D - a3_physics_x64.S
- * Physics hot loops in x86-64 SSE assembly (System V ABI: Linux, macOS).
+ * Physics hot loops in x86-64 SSE assembly (System V bodies; Windows entry stubs in a3_asm_abi.h).
  *
  * Every kernel reproduces the exact floating-point operation order of its C
  * reference in a3_physics_ref.c (see the comments there), which makes the
@@ -10,11 +10,7 @@
  * float args xmm0..; rax/rcx/rdx/rsi/rdi/r8-r11 and all xmm are
  * caller-saved, so no callee-saved registers are used.
  */
-#if defined(__APPLE__)
-#  define SYM(x) _##x
-#else
-#  define SYM(x) x
-#endif
+#include "../core/a3_asm_abi.h"
 
     .intel_syntax noprefix
 
@@ -48,9 +44,7 @@ K_MINUS1:   .float -1.0
  *        const A3Vec4 *accel, const A3Vec4 *damp, f32 dt, u32 count)
  *   rdi lin_vel, rsi ang_vel, rdx accel, rcx damp, xmm0 dt, r8d count
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_phys_integrate_velocities)
-    .p2align 4
-SYM(a3_phys_integrate_velocities):
+A3_ASM_FUNC(a3_phys_integrate_velocities, ARGS_PPPPFI)
     test    r8d, r8d
     jz      2f
     shufps  xmm0, xmm0, 0
@@ -82,9 +76,7 @@ SYM(a3_phys_integrate_velocities):
  *        const A3Vec4 *lin_vel, const A3Vec4 *ang_vel, f32 dt, u32 count)
  *   rdi pos, rsi rot, rdx lin_vel, rcx ang_vel, xmm0 dt, r8d count
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_phys_integrate_transforms)
-    .p2align 4
-SYM(a3_phys_integrate_transforms):
+A3_ASM_FUNC(a3_phys_integrate_transforms, ARGS_PPPPFI)
     test    r8d, r8d
     jz      9f
     movss   xmm1, [rip + K_HALF]
@@ -153,9 +145,7 @@ SYM(a3_phys_integrate_transforms):
  *   inv_mass_a 80, inv_mass_b 84, eff_mass 88, bias 92,
  *   acc 96, lo 100, hi 104, mu 108, body_a 112, body_b 116, friction_of 120
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_phys_solve_rows)
-    .p2align 4
-SYM(a3_phys_solve_rows):
+A3_ASM_FUNC(a3_phys_solve_rows, ARGS_PPPP)
     test    esi, esi
     jz      9f
     mov     r9, rdi             /* rows base (friction rows index into it) */
@@ -255,9 +245,7 @@ SYM(a3_phys_solve_rows):
  *        const A3Vec4 *half, A3Vec4 *out_min, A3Vec4 *out_max, u32 count)
  *   rdi centers, rsi cols, rdx half, rcx out_min, r8 out_max, r9d count
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_phys_compute_aabbs)
-    .p2align 4
-SYM(a3_phys_compute_aabbs):
+A3_ASM_FUNC(a3_phys_compute_aabbs, ARGS_PPPPPI)
     test    r9d, r9d
     jz      2f
     movaps  xmm15, [rip + K_ABS]
@@ -300,9 +288,7 @@ SYM(a3_phys_compute_aabbs):
  *        u32 *out_pairs, u32 max_pairs)
  *   rdi mins, rsi maxs, edx count, rcx out_pairs, r8d max_pairs -> eax
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_phys_sap_pairs)
-    .p2align 4
-SYM(a3_phys_sap_pairs):
+A3_ASM_FUNC(a3_phys_sap_pairs, ARGS_PPIPI)
     xor     eax, eax            /* found */
     xor     r9d, r9d            /* i */
 1:
@@ -350,9 +336,7 @@ SYM(a3_phys_sap_pairs):
  *        const A3Vec4 *mins, const A3Vec4 *maxs, u32 count, f32 *out_t)
  *   rdi origin, rsi inv_dir, xmm0 t_max, rdx mins, rcx maxs, r8d count, r9 out_t -> eax
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_phys_ray_aabbs)
-    .p2align 4
-SYM(a3_phys_ray_aabbs):
+A3_ASM_FUNC(a3_phys_ray_aabbs, ARGS_PPFPPIP)
     xor     eax, eax
     test    r8d, r8d
     jz      9f
@@ -408,5 +392,5 @@ SYM(a3_phys_ray_aabbs):
     ret
 
 #if defined(__linux__) && defined(__ELF__)
-    .section .note.GNU-stack,"",@progbits
+A3_ASM_END_FILE
 #endif

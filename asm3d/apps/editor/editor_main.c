@@ -817,6 +817,16 @@ static int selftest_run(A3Editor *ed, const char *tmp) {
     char exe[ED_PATH];
     a3_path_join(exe, sizeof(exe), ed->build_output, "data/project.a3proj");
     ST_CHECK(a3_file_exists(exe));
+    {
+        char game[ED_PATH], gname[96];
+#if A3_PLATFORM_WINDOWS
+        a3_snprintf(gname, sizeof(gname), "%s.exe", "SelfTest");
+#else
+        a3_snprintf(gname, sizeof(gname), "%s", "SelfTest");
+#endif
+        a3_path_join(game, sizeof(game), ed->build_output, gname);
+        ST_CHECK(a3_file_exists(game));
+    }
     /* code editor round trip */
     i32 doc = ed_code_open(ed, "Assets/Scripts/selftest.txt");
     ST_CHECK(doc >= 0);

@@ -3,9 +3,20 @@
 ASM3D is a desktop game engine and editor written in C11. The hot paths are
 x86-64 assembly: SIMD math, frustum culling, and the physics integrator,
 broadphase, solver and raycasts. The engine and editor have no third-party
-code or libraries (only X11 and OpenGL from the system).
+code or libraries (only the OS windowing API and OpenGL from the system). It runs on Windows and Linux.
 
 See [docs/STATUS.md](docs/STATUS.md) for exactly what works today.
+
+## Windows
+
+Download a release zip, extract it, and run `asm3d_editor.exe`. To build it yourself:
+
+- **On Windows (MSYS2 MinGW64 shell):** `pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja`,
+  then `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build`.
+- **Cross-compile from Linux:** `sudo apt install mingw-w64`, then
+  `cmake -S . -B build-win -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake -DCMAKE_BUILD_TYPE=Release && cmake --build build-win`.
+
+The `.exe` files are statically linked, so no DLLs need to be shipped alongside them.
 
 ## Build (Linux)
 

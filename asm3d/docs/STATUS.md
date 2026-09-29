@@ -12,11 +12,12 @@ listed. **Planned** = not implemented yet.
 
 | Area | Status | Notes |
 |---|---|---|
-| Linux x86-64 desktop (X11 + OpenGL 3.3) | Working | The main target: the editor, the player and built games. |
-| x86-64 SSE assembly kernels | Working | SIMD math, frustum culling and physics. Each kernel has a C reference and tests prove the results are bit-identical. |
+| Windows 10/11 x64 (Win32 + OpenGL 3.3) | Working | Editor, player and built games. Cross-compiled with MinGW-w64. The test suite and the editor self test pass on Windows (checked under Wine 9 here). The UI is not DPI-aware yet: on high-DPI screens Windows scales it up. |
+| Linux x86-64 desktop (X11 + OpenGL 3.3) | Working | Editor, player and built games. |
+| x86-64 SSE assembly kernels | Working | SIMD math, frustum culling and physics, with the same kernel bodies on Windows and Linux (Windows goes through small ABI entry stubs). Each kernel has a C reference, and tests prove bit-identical results on both operating systems. |
 | Other CPUs (C reference path) | Working in tests | The same code without assembly, used for WebAssembly. |
 | WebAssembly (engine core + physics) | Partial | Compiles with clang/wasm-ld. The full test suite passes in Node. There is no browser renderer or HTML exporter: ASM3D is desktop-first. |
-| Windows, macOS | Planned | Platform and window layers are isolated (`a3_platform.h`, `a3_window.h`) so they can be added. |
+| macOS | Planned | The platform and window layers are isolated (`a3_platform.h`, `a3_window.h`). |
 
 ## Engine
 
@@ -63,7 +64,7 @@ listed. **Planned** = not implemented yet.
 | Code editor: highlighting, find/replace, undo, JSON error markers | Working | |
 | Command palette (Ctrl+P) over commands, objects, assets and components | Working | |
 | Shader Maker: node graph, live preview, parameters, errors shown on nodes | Working | |
-| One-click desktop build (Linux) with project checks | Working | Debug/Release only change the folder name for now. |
+| One-click desktop build (Windows or Linux, the OS the editor runs on) with project checks | Working | Debug/Release only change the folder name for now. |
 | Visual script editor, animation editor, terrain tools | Planned | |
 
 ## Games

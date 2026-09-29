@@ -2,8 +2,13 @@
 #   Native (primary):   cmake -S . -B build -G Ninja && cmake --build build
 #   Tests:              ./build/asm3d_tests
 #   Wasm (secondary):   built automatically when clang + wasm-ld are available
+#   Windows:            native with MinGW-w64 / MSYS2, or cross-compile from Linux:
+#                       cmake -S . -B build-win -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake
 cmake_minimum_required(VERSION 3.20)
 project(ASM3D VERSION 0.1.0 LANGUAGES C)
+if(WIN32)
+  enable_language(RC)
+endif()
 
 option(ASM3D_USE_ASM "Use hand-written x86-64 assembly kernels" ON)
 option(ASM3D_BUILD_WASM "Also build the WebAssembly runtime/tests (secondary target)" ON)
@@ -16,7 +21,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(A3_USE_ASM_ACTIVE OFF)
-if(ASM3D_USE_ASM AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND NOT WIN32)
+if(ASM3D_USE_ASM AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
   enable_language(ASM)
   set(A3_USE_ASM_ACTIVE ON)
 endif()
@@ -47,6 +52,7 @@ set(A3_ENGINE_SOURCES
   ${A3_CORE_SOURCES}
   ${A3_SHARED_SOURCES}
   engine/platform/platform_posix.c
+  engine/platform/platform_win32.c
   engine/jobs/a3_jobs.c
 )
 if(A3_USE_ASM_ACTIVE)
@@ -60,28 +66,49 @@ target_compile_options(asm3d_engine PUBLIC $<$<COMPILE_LANGUAGE:C>:${A3_COMMON_F
 if(A3_USE_ASM_ACTIVE)
   target_compile_definitions(asm3d_engine PUBLIC A3_USE_ASM=1)
 endif()
-find_package(Threads REQUIRED)
-target_link_libraries(asm3d_engine PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
+if(WIN32)
+  target_link_libraries(asm3d_engine PUBLIC winmm shell32 ole32)
+else()
+  find_package(Threads REQUIRED)
+  target_link_libraries(asm3d_engine PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
+endif()
+if(MINGW)
+  # self-contained .exe files: no MinGW runtime DLLs to ship
+  add_link_options(-static -static-libgcc)
+endif()
 
 # ---- Desktop runtime (window, GPU, renderer, assets, engine loop) ----
-if(UNIX AND NOT APPLE)
-  find_package(X11 REQUIRED)
+if(WIN32 OR (UNIX AND NOT APPLE))
   file(GLOB A3_DESKTOP_SOURCES CONFIGURE_DEPENDS engine/runtime/*.c)
-  list(APPEND A3_DESKTOP_SOURCES engine/platform/window_x11.c engine/render/rhi_gl.c engine/render/a3_gl.c)
-  add_library(asm3d_desktop STATIC ${A3_DESKTOP_SOURCES})
-  target_link_libraries(asm3d_desktop PUBLIC asm3d_engine ${X11_LIBRARIES})
-  target_include_directories(asm3d_desktop PUBLIC ${X11_INCLUDE_DIR})
+  list(APPEND A3_DESKTOP_SOURCES engine/render/rhi_gl.c engine/render/a3_gl.c)
+  if(WIN32)
+    list(APPEND A3_DESKTOP_SOURCES engine/platform/window_win32.c)
+    add_library(asm3d_desktop STATIC ${A3_DESKTOP_SOURCES})
+    target_link_libraries(asm3d_desktop PUBLIC asm3d_engine opengl32 gdi32 user32)
+  else()
+    find_package(X11 REQUIRED)
+    list(APPEND A3_DESKTOP_SOURCES engine/platform/window_x11.c)
+    add_library(asm3d_desktop STATIC ${A3_DESKTOP_SOURCES})
+    target_link_libraries(asm3d_desktop PUBLIC asm3d_engine ${X11_LIBRARIES})
+    target_include_directories(asm3d_desktop PUBLIC ${X11_INCLUDE_DIR})
+  endif()
   target_compile_options(asm3d_desktop PRIVATE ${A3_WARNINGS})
+  # Windows: GUI programs (no console window); they attach to the parent
+  # console when started from a terminal so logs still show up.
+  if(WIN32)
+    set(A3_GUI WIN32)
+    set(A3_ICON_RC ${CMAKE_SOURCE_DIR}/apps/asm3d.rc)
+  endif()
 
-  add_executable(asm3d_ui_gallery apps/ui_gallery/main.c)
+  add_executable(asm3d_ui_gallery ${A3_GUI} apps/ui_gallery/main.c)
   target_link_libraries(asm3d_ui_gallery PRIVATE asm3d_desktop)
 
-  add_executable(asm3d_player apps/player/main.c)
+  add_executable(asm3d_player ${A3_GUI} apps/player/main.c ${A3_ICON_RC})
   target_link_libraries(asm3d_player PRIVATE asm3d_desktop)
   target_compile_options(asm3d_player PRIVATE ${A3_WARNINGS})
 
   file(GLOB A3_EDITOR_SOURCES CONFIGURE_DEPENDS apps/editor/*.c)
-  add_executable(asm3d_editor ${A3_EDITOR_SOURCES})
+  add_executable(asm3d_editor ${A3_GUI} ${A3_EDITOR_SOURCES} ${A3_ICON_RC})
   target_link_libraries(asm3d_editor PRIVATE asm3d_desktop)
   target_compile_options(asm3d_editor PRIVATE ${A3_WARNINGS})
 endif()
@@ -98,7 +125,7 @@ add_test(NAME native_tests COMMAND asm3d_tests)
 # ---- WebAssembly (secondary target) ----
 # Freestanding build: no emscripten, no libc. The engine supplies its own
 # allocator, formatter and math, so only clang + wasm-ld are needed.
-if(ASM3D_BUILD_WASM)
+if(ASM3D_BUILD_WASM AND NOT CMAKE_CROSSCOMPILING)
   find_program(A3_CLANG NAMES clang clang-18 clang-17 clang-16)
   find_program(A3_WASM_LD NAMES wasm-ld wasm-ld-18 wasm-ld-17)
   if(A3_CLANG AND A3_WASM_LD)

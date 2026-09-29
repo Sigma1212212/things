@@ -1,6 +1,6 @@
 /*
  * ASM3D - a3_simd_x64.S
- * x86-64 SSE assembly kernels (System V ABI: Linux, macOS).
+ * x86-64 SSE assembly kernels (System V bodies; Windows entry stubs in a3_asm_abi.h).
  *
  * Each kernel performs the exact same sequence of IEEE single precision
  * multiplies and adds as its C reference in a3_simd_ref.c, so results are
@@ -8,11 +8,7 @@
  * Unaligned loads (movups) are used so callers need not guarantee 16-byte
  * alignment; on modern cores this costs nothing for aligned data.
  */
-#if defined(__APPLE__)
-#  define SYM(x) _##x
-#else
-#  define SYM(x) x
-#endif
+#include "a3_asm_abi.h"
 
     .intel_syntax noprefix
     .text
@@ -22,9 +18,7 @@
  *   rdi = out, rsi = a, rdx = b, ecx = count
  *   out[i] = a[i] * b[i] (column-major)
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_asm_mat4_mul_batch)
-    .p2align 4
-SYM(a3_asm_mat4_mul_batch):
+A3_ASM_FUNC(a3_asm_mat4_mul_batch, ARGS_PPPP)
     test    ecx, ecx
     jz      2f
 1:
@@ -64,9 +58,7 @@ SYM(a3_asm_mat4_mul_batch):
  * void a3_asm_mat4_mul_one_many(A3Mat4 *out, const A3Mat4 *parent, const A3Mat4 *locals, u32 count)
  *   out[i] = parent * locals[i]
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_asm_mat4_mul_one_many)
-    .p2align 4
-SYM(a3_asm_mat4_mul_one_many):
+A3_ASM_FUNC(a3_asm_mat4_mul_one_many, ARGS_PPPP)
     test    ecx, ecx
     jz      2f
     movups  xmm0, [rsi]
@@ -103,9 +95,7 @@ SYM(a3_asm_mat4_mul_one_many):
  * void a3_asm_transform_points(A3Vec4 *out, const A3Mat4 *m, const A3Vec4 *in, u32 count)
  *   out[i] = m * in[i]
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_asm_transform_points)
-    .p2align 4
-SYM(a3_asm_transform_points):
+A3_ASM_FUNC(a3_asm_transform_points, ARGS_PPPP)
     test    ecx, ecx
     jz      2f
     movups  xmm0, [rsi]
@@ -144,9 +134,7 @@ SYM(a3_asm_transform_points):
  *   d = ((px*cx + py*cy) + pz*cz) + pw.
  *   Returns number of visible spheres.
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_asm_cull_spheres_soa)
-    .p2align 4
-SYM(a3_asm_cull_spheres_soa):
+A3_ASM_FUNC(a3_asm_cull_spheres_soa, ARGS_PPPP)
     xor     eax, eax
     test    ecx, ecx
     jz      3f
@@ -218,9 +206,7 @@ SYM(a3_asm_cull_spheres_soa):
  *   rdi = pos, rsi = vel, xmm0 = dt, edx = count
  *   pos[i] = pos[i] + vel[i] * dt
  * --------------------------------------------------------------------- */
-    .globl SYM(a3_asm_integrate_v4)
-    .p2align 4
-SYM(a3_asm_integrate_v4):
+A3_ASM_FUNC(a3_asm_integrate_v4, ARGS_PPFI)
     test    edx, edx
     jz      2f
     shufps  xmm0, xmm0, 0
@@ -238,5 +224,5 @@ SYM(a3_asm_integrate_v4):
     ret
 
 #if defined(__linux__) && defined(__ELF__)
-    .section .note.GNU-stack,"",@progbits
+A3_ASM_END_FILE
 #endif

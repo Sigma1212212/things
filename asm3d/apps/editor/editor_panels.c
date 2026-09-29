@@ -811,7 +811,7 @@ static const DocTopic g_topics[] = {
       "Open the Build panel (Ctrl+B builds immediately).\n\n"
       "Check Project looks for common problems first: missing assets, scenes without a camera, lights without shadows, very large textures.\n"
       "Build Game creates a folder in Builds/ containing the game program and a data folder with your project. Zip that folder to share it.\n\n"
-      "Desktop (Linux x86-64) builds are supported today. Windows and macOS players are planned; see docs/STATUS.md." },
+      "Builds are made for the system the editor runs on: Windows (x64) or Linux (x86-64). macOS is planned; see docs/STATUS.md." },
     { "Code Editor",
       "The Code panel edits scripts, shaders and text files with syntax highlighting, line numbers, undo, find and replace.\n"
       "Ctrl+S saves, Ctrl+F finds, Ctrl+Z / Ctrl+Y undo and redo, Tab indents.\n\n"
