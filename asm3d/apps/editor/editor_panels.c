@@ -586,7 +586,7 @@ static b32 is_image(const char *name) {
 static b32 is_text(const char *name) {
     const char *ext = a3_path_extension(name);
     return a3_streq(ext, ".a3script") || a3_streq(ext, ".txt") || a3_streq(ext, ".json") || a3_streq(ext, ".md") || a3_streq(ext, ".glsl")
-        || a3_streq(ext, ".a3comp") || a3_streq(ext, ".a3mat");
+        || a3_streq(ext, ".a3comp") || a3_streq(ext, ".a3mat") || a3_streq(ext, ".a3anim");
 }
 
 static void asset_open(A3Editor *ed, const char *rel) {

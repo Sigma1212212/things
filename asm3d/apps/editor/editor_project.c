@@ -15,6 +15,7 @@
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
 #include "../../engine/particles/a3_particles.h"
+#include "../../engine/anim/a3_anim.h"
 #include "../../engine/core/a3_log.h"
 #include "../../engine/core/a3_string.h"
 #include "../../engine/core/a3_format.h"
@@ -195,9 +196,21 @@ void ed_build_template_scene(A3World *w, i32 tpl) {
             A3Entity orb = tp_shape(w, "Orb", A3_PRIM_SPHERE, a3_v3(p.x, p.y + 0.8f, p.z), a3_v3s(0.4f), a3_v4(1, 0.85f, 0.2f, 1), 1, 0);
             ((A3CCollider *)a3_component_get(w, orb, A3_T_COLLIDER))->is_trigger = 1;
             ((A3CMeshRenderer *)a3_component_get(w, orb, A3_T_MESH_RENDERER))->emissive = 1.5f;
+            A3CMotion *mo = (A3CMotion *)a3_component_add(w, orb, A3_T_MOTION);
+            mo->spin = a3_v3(0, 120, 0);
+            mo->bob_height = 0.15f;
+            mo->bob_speed = 0.8f;
+            mo->phase = (f32)i * 0.13f;
         }
         A3Entity pl = tp_player(w, a3_v3(0, 0, 1), A3_CAM_THIRD_PERSON, 1);
         ((A3CCharacterController *)a3_component_get(w, pl, A3_T_CHARACTER))->jump_height = 1.8f;
+        /* keyframed elevator (Assets/Animations/Elevator.a3anim is written with the project) */
+        A3Entity lift = tp_shape(w, "Elevator", A3_PRIM_CUBE, a3_v3(5, -0.25f, 0), a3_v3(2.5f, 0.5f, 2.5f), a3_v4(0.3f, 0.6f, 0.9f, 1), 1, 0);
+        A3CRigidBody *lrb = (A3CRigidBody *)a3_component_add(w, lift, A3_T_RIGIDBODY);
+        lrb->type = A3_BODY_KINEMATIC;
+        A3CAnimator *an = (A3CAnimator *)a3_component_add(w, lift, A3_T_ANIMATOR);
+        a3_strcpy(an->clip.path, sizeof(an->clip.path), "Assets/Animations/Elevator.a3anim");
+        an->loop = A3_ANIM_PINGPONG;
     } break;
     case 4: { /* Racing */
         tp_sun(w, -45, 60, a3_v4(1, 0.93f, 0.82f, 1), 1.0f);
@@ -239,7 +252,14 @@ void ed_build_template_scene(A3World *w, i32 tpl) {
         tp_sun(w, -55, -30, a3_v4(1, 0.96f, 0.9f, 1), 1.0f);
         tp_shape(w, "Arena Floor", A3_PRIM_PLANE, a3_v3(0, 0, 0), a3_v3(50, 1, 50), a3_v4(0.45f, 0.45f, 0.48f, 1), 1, 0);
         for (int i = 0; i < 6; ++i) tp_shape(w, "Cover", A3_PRIM_CUBE, a3_v3(-10.0f + i * 4, 0.6f, -8), a3_v3(2, 1.2f, 0.5f), stone, 1, 0);
-        for (int i = 0; i < 5; ++i) tp_shape(w, "Target", A3_PRIM_CAPSULE, a3_v3(-8.0f + i * 4, 1, -18), a3_v3(0.8f, 1, 0.8f), a3_v4(0.9f, 0.3f, 0.25f, 1), 1, 0);
+        for (int i = 0; i < 5; ++i) {
+            A3Entity tg = tp_shape(w, "Target", A3_PRIM_CAPSULE, a3_v3(-8.0f + i * 4, 1, -18), a3_v3(0.8f, 1, 0.8f), a3_v4(0.9f, 0.3f, 0.25f, 1), 1, 0);
+            A3CMotion *mo = (A3CMotion *)a3_component_add(w, tg, A3_T_MOTION);
+            mo->spin = a3_v3_zero();
+            mo->move_offset = a3_v3(2.5f, 0, 0);
+            mo->move_speed = 0.2f + 0.05f * (f32)i;
+            mo->phase = (f32)i * 0.2f;
+        }
         tp_player(w, a3_v3(0, 0, 6), A3_CAM_FIRST_PERSON, 0);
         break;
     case 7: { /* Sandbox */
@@ -325,7 +345,7 @@ b32 ed_project_create(A3Editor *ed, const char *location, const char *name, i32 
         a3_path_join(probe, sizeof(probe), dir, "project.a3proj");
         if (a3_file_exists(probe)) { a3_log_hint(A3_LOG_ERROR, "editor", "Choose another name or open the existing project.", "a project already exists at %s", dir); return 0; }
     }
-    static const char *folders[] = { "Assets/Scenes", "Assets/Models", "Assets/Textures", "Assets/Materials", "Assets/Shaders",
+    static const char *folders[] = { "Assets/Scenes", "Assets/Models", "Assets/Textures", "Assets/Materials", "Assets/Shaders", "Assets/Animations",
                                      "Assets/Scripts", "Assets/Audio", "Assets/Prefabs", ".asm3d/recovery", ".asm3d/cache" };
     for (u32 i = 0; i < A3_ARRAY_COUNT(folders); ++i) {
         char p[ED_PATH];
@@ -354,6 +374,28 @@ b32 ed_project_create(A3Editor *ed, const char *location, const char *name, i32 
             "  Assets/Shaders   Shader Maker graphs\n"
             "Everything is plain text and works well with Git.\n", name, A3_VERSION_STRING, g_ed_templates[tpl]);
         write_text(p, readme);
+    }
+    /* template content that lives in files */
+    if (tpl == 3) {
+        A3AnimClip clip;
+        a3_anim_clip_init(&clip, "Elevator");
+        clip.duration = 4.0f;
+        i32 ti = a3_anim_track_add(&clip, "", "Transform", "position");
+        f32 k0[4] = { 5, -0.25f, 0, 0 }, k1[4] = { 5, 4.0f, 0, 0 };
+        a3_anim_key_set(&clip.tracks[ti], 0.0f, k0, A3_INTERP_SMOOTH);
+        a3_anim_key_set(&clip.tracks[ti], 0.5f, k0, A3_INTERP_SMOOTH);
+        a3_anim_key_set(&clip.tracks[ti], 3.5f, k1, A3_INTERP_SMOOTH);
+        a3_anim_key_set(&clip.tracks[ti], 4.0f, k1, A3_INTERP_SMOOTH);
+        A3StrBuf asb;
+        a3_strbuf_init(&asb, A3_MEM_EDITOR);
+        a3_anim_save_json(&clip, &asb);
+        char ap[ED_PATH], adir[ED_PATH];
+        a3_path_join(ap, sizeof(ap), dir, "Assets/Animations/Elevator.a3anim");
+        a3_path_dirname(ap, adir, sizeof(adir));
+        a3_dir_create(adir);
+        write_text(ap, asb.data);
+        a3_strbuf_free(&asb);
+        a3_anim_clip_free(&clip);
     }
     /* scene */
     ed->world = a3_world_create("Main");
@@ -416,6 +458,7 @@ b32 ed_project_open(A3Editor *ed, const char *dir) {
 
 void ed_project_close(A3Editor *ed) {
     if (ed->mode != ED_EDIT) ed_stop(ed);
+    if (ed->has_project) ed_anim_flush(ed);
     if (ed->has_project) {
         char lp[ED_PATH];
         ed_project_path(ed, ".asm3d/layout.json", lp, sizeof(lp));
@@ -448,6 +491,7 @@ void ed_scene_new(A3Editor *ed) {
 
 b32 ed_scene_save(A3Editor *ed) {
     if (!ed->has_project || !ed->world) return 0;
+    ed_anim_flush(ed); /* never save an animation preview pose */
     char path[ED_PATH];
     ed_project_path(ed, ed->scene_path, path, sizeof(path));
     char dir[ED_PATH];

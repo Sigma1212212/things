@@ -38,9 +38,10 @@ listed. **Planned** = not implemented yet.
 | Custom materials (`.a3shader`) | Working | Made with the Shader Maker, loaded by the renderer in the editor and in games. |
 | Physics: rigid bodies, box/sphere/capsule/mesh colliders, SAT contacts, warm starting, sleeping, triggers, raycasts | Working | Assembly kernels for integration, AABBs, sweep-and-prune, the solver and raycasts. |
 | Character controller (walk, run, jump, stairs, slopes, 1st/3rd person camera) | Working | |
-| Audio | Planned | |
-| Animation (skeletal, blending) | Planned | |
-| Particles | Planned | |
+| Audio: mixer, WAV, 3D sound, AudioSource/AudioListener | Working | SSE assembly mixing kernels (bit-exact C reference). Output via WASAPI on Windows and ALSA on Linux; silent if there is no device. 12 synthesized built-in sounds, plus automatic footsteps and jump sounds for the character. OGG/MP3 decoding is planned. |
+| Animation: keyframe clips, Animator, Motion, timeline editor | Working | Tracks animate any reflected field (transform, light, colors, custom components) with smooth, linear or step keys. |
+| Skeletal animation (bones, skinning, blending) | Planned | Needs glTF import. |
+| Particles: emitters, 10 presets, instanced billboards | Working | SSE assembly integration kernel (bit-exact C reference). Additive and alpha-sorted blending; previewed live in the editor. GPU simulation and collision are planned. |
 | Scripting language runtime | Planned | The code editor can already write and save `.a3script` files, but they are **not executed**. |
 | Visual scripting | Planned | |
 | Terrain, world streaming, LOD, procedural generation | Planned | The Open World template uses plain props. |
@@ -65,7 +66,8 @@ listed. **Planned** = not implemented yet.
 | Command palette (Ctrl+P) over commands, objects, assets and components | Working | |
 | Shader Maker: node graph, live preview, parameters, errors shown on nodes | Working | |
 | One-click desktop build (Windows or Linux, the OS the editor runs on) with project checks | Working | Debug/Release only change the folder name for now. |
-| Visual script editor, animation editor, terrain tools | Planned | |
+| Animation timeline panel | Working | Key, scrub, preview (the object is restored afterwards), drag keys, set interpolation. |
+| Visual script editor, terrain tools | Planned | |
 
 ## Games
 
@@ -74,8 +76,8 @@ starting points, not finished games.
 
 ## How this is verified
 
-- `asm3d_tests`: 52 tests (unit, determinism golden hashes, physics
-  scenarios, shader graph). They run natively and as WebAssembly
+- `asm3d_tests`: 62 tests (unit, determinism golden hashes, physics
+  scenarios, shader graph, audio, particles, animation). They run natively and as WebAssembly
   (`node tools/run_wasm_tests.mjs build/asm3d_tests.wasm`).
 - `asm3d_editor --selftest`: drives the real editor end to end. It creates a
   project, runs undo/redo, play/stop, save/reopen and a build, compiles every

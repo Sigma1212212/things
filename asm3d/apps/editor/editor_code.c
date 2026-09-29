@@ -191,7 +191,7 @@ static i32 language_for(const char *path) {
     const char *ext = a3_path_extension(path);
     if (a3_streq(ext, ".a3script")) return LANG_SCRIPT;
     if (a3_streq(ext, ".glsl") || a3_streq(ext, ".vert") || a3_streq(ext, ".frag")) return LANG_GLSL;
-    if (a3_streq(ext, ".json") || a3_streq(ext, ".a3comp") || a3_streq(ext, ".a3mat") || a3_streq(ext, ".a3proj") || a3_streq(ext, ".a3shader")) return LANG_JSON;
+    if (a3_streq(ext, ".json") || a3_streq(ext, ".a3comp") || a3_streq(ext, ".a3mat") || a3_streq(ext, ".a3proj") || a3_streq(ext, ".a3shader") || a3_streq(ext, ".a3anim")) return LANG_JSON;
     return LANG_TEXT;
 }
 

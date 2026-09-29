@@ -240,6 +240,11 @@ void ed_draw_field(A3Editor *ed, A3Ui *ui, const A3FieldDesc *f, void *component
 void ed_custom_components_load(A3Editor *ed);   /* Assets/Components/NAME.a3comp, before scenes load */
 void ed_custom_component_save(A3Editor *ed, const char *name, const A3CustomFieldDef *fields, u32 count);
 
+/* animation timeline (editor_anim.c) */
+void ed_anim_panel(void *user, A3Ui *ui, A3Rect r);
+void ed_anim_flush(A3Editor *ed);      /* save the clip and end any preview (before play/save/close) */
+void ed_anim_shutdown(A3Editor *ed);
+
 /* code editor (editor_code.c) */
 void ed_code_panel(void *user, A3Ui *ui, A3Rect r);
 i32  ed_code_open(A3Editor *ed, const char *path);

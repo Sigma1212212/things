@@ -15,6 +15,7 @@
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
 #include "../../engine/particles/a3_particles.h"
+#include "../../engine/anim/a3_anim.h"
 #include "../../engine/resource/a3_assets.h"
 #include "../../engine/scene/a3_scene_io.h"
 #include "../../engine/core/a3_log.h"
@@ -128,6 +129,7 @@ void ed_show_tip_for_component(A3Editor *ed, u32 type_id) {
 void ed_play(A3Editor *ed) {
     if (ed->mode != ED_EDIT) return;
     if (!ed->world) return;
+    ed_anim_flush(ed); /* the game must start from the real scene, not an animation preview */
     ed_undo_end_frame(ed);
     ed->play_world = a3_world_clone(ed->world, "Play");
     if (!ed->play_world) { A3_ERROR("editor", "could not start play mode (out of memory)"); return; }
@@ -233,6 +235,7 @@ void ed_layout_preset(A3Editor *ed, const char *name) {
         d->nodes[right].active = 0;
         a3_dock_add_tab(d, bottom, P("Assets"));
         a3_dock_add_tab(d, bottom, P("Console"));
+        a3_dock_add_tab(d, bottom, P("Animation"));
         a3_dock_add_tab(d, bottom, P("Profiler"));
         a3_dock_add_tab(d, bottom, P("Docs"));
         d->nodes[bottom].active = 0;
@@ -662,6 +665,7 @@ static void register_panels(A3Editor *ed) {
     a3_dock_add_panel(d, "Build", A3_ICON_PLAY, ed_build_panel, ed, 0);
     a3_dock_add_panel(d, "Code", A3_ICON_PENCIL, ed_code_panel, ed, A3_PANEL_NO_SCROLL);
     a3_dock_add_panel(d, "Shader Maker", A3_ICON_DIAMOND, ed_shader_panel, ed, A3_PANEL_NO_SCROLL);
+    a3_dock_add_panel(d, "Animation", A3_ICON_RIGHT, ed_anim_panel, ed, A3_PANEL_NO_SCROLL);
 }
 
 static void route_game_input(A3Editor *ed, const A3InputState *real) {
@@ -815,6 +819,32 @@ static int selftest_run(A3Editor *ed, const char *tmp) {
     ST_CHECK(ed->mode == ED_EDIT && !ed->play_world);
     A3Vec3 after = a3_transform(ed->world, crate)->position;
     ST_CHECK(after.x == crate_pos.x && after.y == crate_pos.y && after.z == crate_pos.z);
+    /* keyframe animation plays in the game and never changes the edited scene */
+    {
+        const char *clip_json = "{\"format\":\"asm3d.animation\",\"version\":1,\"name\":\"lift\",\"duration\":1,"
+                                "\"tracks\":[{\"component\":\"Transform\",\"field\":\"position\",\"keys\":[[0,0,0,0,0,1],[1,0,5,0,0,1]]}]}";
+        char cp[ED_PATH];
+        ed_project_path(ed, "Assets/Animations/lift.a3anim", cp, sizeof(cp));
+        char cdir[ED_PATH];
+        a3_path_dirname(cp, cdir, sizeof(cdir));
+        a3_dir_create(cdir);
+        ST_CHECK(a3_file_write_atomic(cp, clip_json, a3_strlen(clip_json)) == A3_OK);
+        A3Entity lift = ed_create_entity(ed, "Lift", A3_PRIM_CUBE, "Animator");
+        A3CAnimator *anm = (A3CAnimator *)a3_component_get(ed->world, lift, A3_T_ANIMATOR);
+        ST_CHECK(anm != 0);
+        a3_strcpy(anm->clip.path, sizeof(anm->clip.path), "Assets/Animations/lift.a3anim");
+        anm->loop = A3_ANIM_ONCE;
+        ed_undo_end_frame(ed);
+        u64 lift_guid = a3_entity_guid(ed->world, lift);
+        ed_play(ed);
+        for (int i = 0; i < 90; ++i) a3_engine_simulate(ed->engine, ed->play_world, 1.0f / 60.0f, 0, 0);
+        A3Entity pl = a3_entity_find_by_guid(ed->play_world, lift_guid);
+        A3CTransform *lt = a3_transform(ed->play_world, pl);
+        ST_CHECK(lt && a3_absf(lt->position.y - 5.0f) < 1e-3f);
+        ed_stop(ed);
+        lt = a3_transform(ed->world, a3_entity_find_by_guid(ed->world, lift_guid));
+        ST_CHECK(lt && a3_absf(lt->position.y - 5.0f) > 1.0f);
+    }
     /* save + reopen */
     ST_CHECK(ed_scene_save(ed));
     u32 saved_count = a3_world_entity_count(ed->world);
@@ -1004,6 +1034,7 @@ done:
     ed_project_close(ed);
     ed_viewport_shutdown(ed);
     ed_shader_shutdown(ed);
+    ed_anim_shutdown(ed);
     ed_code_free(ed);
     ed_undo_free(&ed->undo);
     a3_ui_destroy(ed->ui);

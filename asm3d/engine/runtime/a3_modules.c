@@ -9,6 +9,7 @@
 #include "../physics/a3_character.h"
 #include "../audio/a3_audio.h"
 #include "../particles/a3_particles.h"
+#include "../anim/a3_anim.h"
 #include "../scene/a3_components.h"
 #include "../platform/a3_window.h"
 #include "../core/a3_string.h"
@@ -95,6 +96,10 @@ static void sys_character_move(A3SystemContext *ctx, void *user) {
 
 static void sys_particles(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_particles_update(ctx->world, ctx->dt); }
 
+/* ---- animation (play mode only: never changes the edited scene) ---- */
+
+static void sys_anim(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_anim_update(ctx->world, ctx->dt); }
+
 /* ---- audio ---- */
 
 static void sys_audio(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_audio_update_world(ctx->world); }
@@ -104,6 +109,7 @@ void a3_modules_register_all(void) {
     a3_physics_register();
     a3_audio_register();
     a3_particles_register();
+    a3_anim_register();
     A3SystemDesc d;
     a3_zero_struct(&d);
     d.name = "Character Input";
@@ -125,6 +131,13 @@ void a3_modules_register_all(void) {
     d.order = 100;
     d.update = sys_physics;
     d.on_stop = sys_physics_stop;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "Animation";
+    d.phase = A3_PHASE_UPDATE;
+    d.order = 10;
+    d.update = sys_anim;
     a3_systems_register(&d);
 
     a3_zero_struct(&d);
