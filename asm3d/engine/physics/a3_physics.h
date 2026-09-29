@@ -73,7 +73,8 @@ typedef struct A3CCharacterController {
     f32 yaw;                /* runtime, radians */
     f32 pitch;              /* runtime, radians */
     f32 jump_buffer;        /* runtime: seconds a jump request stays valid */
-    f32 _pad[2];
+    b32 sounds;             /* built-in footstep / jump / landing sounds */
+    f32 step_distance;      /* runtime: meters walked since the last footstep */
 } A3CCharacterController;
 
 typedef struct A3RaycastHit {

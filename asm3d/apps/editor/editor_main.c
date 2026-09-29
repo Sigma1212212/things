@@ -13,6 +13,7 @@
  */
 #include "editor.h"
 #include "../../engine/physics/a3_physics.h"
+#include "../../engine/audio/a3_audio.h"
 #include "../../engine/resource/a3_assets.h"
 #include "../../engine/scene/a3_scene_io.h"
 #include "../../engine/core/a3_log.h"
@@ -368,6 +369,7 @@ static void create_menu_items(A3Editor *ed, A3Ui *ui) {
         a3_ui_end_menu(ui);
     }
     if (a3_ui_menu_item(ui, "Camera", 0, 1)) ed_create_entity(ed, "Camera", A3_PRIM_NONE, "Camera");
+    if (a3_ui_menu_item(ui, "Sound", 0, 1)) ed_create_entity(ed, "Sound", A3_PRIM_NONE, "AudioSource");
     a3_ui_menu_separator(ui);
     if (a3_ui_menu_item(ui, "Player (First Person)", 0, 1)) ed_create_entity(ed, "Player", A3_PRIM_NONE, "CharacterController");
     if (a3_ui_menu_item(ui, "Physics Crate", 0, 1)) {

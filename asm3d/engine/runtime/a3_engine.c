@@ -11,6 +11,7 @@
 #include "../resource/a3_assets.h"
 #include "../platform/a3_platform.h"
 #include "../jobs/a3_jobs.h"
+#include "../audio/a3_audio.h"
 
 #define MAX_SYSTEMS 128
 
@@ -97,6 +98,7 @@ A3Engine *a3_engine_create(const A3EngineDesc *desc) {
     if (!e->renderer) { a3_engine_destroy(e); return 0; }
     a3_input_map_defaults(&e->input_map);
     a3_jobs_init(0);
+    a3_audio_init(0); /* silent (not an error) when there is no audio device */
     e->fixed_dt = 1.0f / (d.fixed_hz > 0 ? d.fixed_hz : 60.0f);
     e->last_ns = a3_time_ns();
     return e;
@@ -104,6 +106,7 @@ A3Engine *a3_engine_create(const A3EngineDesc *desc) {
 
 void a3_engine_destroy(A3Engine *e) {
     if (!e) return;
+    a3_audio_shutdown();
     a3_renderer_destroy(e->renderer);
     a3_assets_shutdown();
     a3_rhi_shutdown();

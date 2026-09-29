@@ -7,6 +7,7 @@
  */
 #include "editor.h"
 #include "../../engine/physics/a3_physics.h"
+#include "../../engine/audio/a3_audio.h"
 #include "../../engine/resource/a3_assets.h"
 #include "../../engine/scene/a3_scene_io.h"
 #include "../../engine/core/a3_log.h"
@@ -29,6 +30,7 @@ static u32 entity_icon(A3World *w, A3Entity e, u32 *color, A3Ui *ui) {
     if (l) { *color = col(ui, A3_UIC_WARNING); return l->type == A3_LIGHT_DIRECTIONAL ? A3_ICON_SUN : A3_ICON_LIGHT; }
     if (a3_component_has(w, e, A3_T_CHARACTER)) { *color = col(ui, A3_UIC_SUCCESS); return A3_ICON_HEART; }
     if (a3_component_has(w, e, A3_T_RIGIDBODY)) return A3_ICON_BOX;
+    if (a3_component_has(w, e, A3_T_AUDIO_SOURCE) && !a3_component_has(w, e, A3_T_MESH_RENDERER)) { *color = col(ui, A3_UIC_ACCENT); return A3_ICON_MUSIC; }
     if (a3_component_has(w, e, A3_T_MESH_RENDERER)) return A3_ICON_CUBE;
     if (a3_component_has(w, e, A3_T_WORLD_SETTINGS)) return A3_ICON_CLOUD;
     return A3_ICON_DIAMOND_O;
@@ -168,6 +170,7 @@ static b32 asset_matches_kind(const char *path, u32 kind) {
     case A3_ASSET_MATERIAL: return a3_streq(ext, ".a3mat") || a3_streq(ext, ".a3shader");
     case A3_ASSET_SHADER: return a3_streq(ext, ".a3shader");
     case A3_ASSET_SCENE: return a3_streq(ext, ".a3scene");
+    case A3_ASSET_SOUND: return a3_streq(ext, ".wav");
     default: return 1;
     }
 }
@@ -408,6 +411,13 @@ void ed_inspector_panel(void *user, A3Ui *ui, A3Rect r) {
                 ed_draw_field(ed, ui, f, data, t->name);
             }
             if (hidden_adv) a3_ui_label_colored(ui, col(ui, A3_UIC_TEXT_DISABLED), "%u advanced settings hidden (switch to Advanced Mode)", hidden_adv);
+            if (id == A3_T_AUDIO_SOURCE) {
+                if (a3_ui_button_ex(ui, "\xE2\x96\xB6 Preview Sound", 0, A3_BUTTON_SMALL)) {
+                    if (!a3_audio_preview_source((A3CAudioSource *)data)) a3_ui_notify(ui, col(ui, A3_UIC_WARNING), "No sound selected (pick a Built-in Sound or a .wav Clip)");
+                    else if (!a3_audio_device_ok()) a3_ui_notify(ui, col(ui, A3_UIC_WARNING), "No audio device found - connect speakers or headphones");
+                }
+                a3_ui_tooltip(ui, "Plays the sound once, without 3D effects");
+            }
             if (id != A3_T_TRANSFORM && ed->mode == ED_EDIT) {
                 if (a3_ui_button_ex(ui, "Remove", 0, A3_BUTTON_SMALL | A3_BUTTON_FLAT)) remove_id = id;
             }
@@ -569,6 +579,10 @@ static void asset_open(A3Editor *ed, const char *rel) {
         ed_scene_open(ed, rel);
     } else if (a3_streq(ext, ".a3shader")) {
         if (ed_shader_open(ed, rel)) a3_dock_show(&ed->dock, "Shader Maker");
+    } else if (a3_streq(ext, ".wav")) {
+        u32 clip = a3_audio_clip(rel);
+        if (clip) a3_audio_play(clip, 1.0f, 1.0f, 0);
+        a3_ui_notify(ed->ui, 0, clip ? "Playing %s (%.1f s)" : "Could not play %s", a3_path_filename(rel), (f64)a3_audio_clip_seconds(clip));
     } else if (is_text(rel)) {
         if (ed_code_open(ed, rel) >= 0) a3_dock_show(&ed->dock, "Code");
     } else {
@@ -761,6 +775,11 @@ void ed_profiler_panel(void *user, A3Ui *ui, A3Rect r) {
             a3_ui_property(ui, "  Narrowphase", 0); a3_ui_label(ui, "%.3f ms", ps->narrowphase_ms);
             a3_ui_property(ui, "  Solver", "Sequential impulses (assembly)"); a3_ui_label(ui, "%.3f ms (%u rows)", ps->solver_ms, ps->solver_rows);
         }
+    }
+    if (a3_ui_collapsing_header(ui, "prof_audio", "Audio", A3_ICON_MUSIC, 0)) {
+        a3_ui_property(ui, "Device", 0); a3_ui_label(ui, "%s", a3_audio_device_name());
+        a3_ui_property(ui, "Sample Rate", 0); a3_ui_label(ui, "%u Hz", a3_audio_sample_rate());
+        a3_ui_property(ui, "Playing", "Sounds playing right now (max 64)"); a3_ui_label(ui, "%u voices", a3_audio_active_voices());
     }
     if (a3_ui_collapsing_header(ui, "prof_mem", "Memory", A3_ICON_HEX, ed->level != ED_LEVEL_BEGINNER)) {
         A3MemStats ms;
@@ -1002,6 +1021,13 @@ void ed_settings_panel(void *user, A3Ui *ui, A3Rect r) {
         }
         a3_ui_property(ui, "Anti-aliasing (FXAA)", 0); a3_ui_toggle(ui, "fxaa", &rs->fxaa);
         a3_ui_property(ui, "Vignette", 0); a3_ui_slider_float(ui, "vig", &rs->vignette, 0, 1, "%.2f");
+    }
+    if (a3_ui_collapsing_header(ui, "set_audio", "Audio", A3_ICON_MUSIC, 1)) {
+        f32 mv = a3_audio_master_volume();
+        a3_ui_property(ui, "Master Volume", "Overall volume of the editor and the game preview");
+        if (a3_ui_slider_float(ui, "master_vol", &mv, 0, 1.5f, "%.2f")) a3_audio_set_master_volume(mv);
+        a3_ui_property(ui, "Output", 0);
+        a3_ui_label_colored(ui, a3_audio_device_ok() ? col(ui, A3_UIC_TEXT) : col(ui, A3_UIC_WARNING), "%s", a3_audio_device_ok() ? a3_audio_device_name() : "No audio device (silent)");
     }
     A3World *w = ed_active_world(ed);
     if (w && a3_ui_collapsing_header(ui, "set_phys", "Physics", A3_ICON_BOX, ed->level != ED_LEVEL_BEGINNER)) {

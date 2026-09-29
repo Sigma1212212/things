@@ -13,6 +13,7 @@
 #include "editor.h"
 #include "../../engine/scene/a3_scene_io.h"
 #include "../../engine/physics/a3_physics.h"
+#include "../../engine/audio/a3_audio.h"
 #include "../../engine/core/a3_log.h"
 #include "../../engine/core/a3_string.h"
 #include "../../engine/core/a3_format.h"
@@ -82,6 +83,19 @@ static A3Entity tp_light(A3World *w, const char *name, A3LightType type, A3Vec3 
     l->color = color;
     l->intensity = intensity;
     l->range = range;
+    return e;
+}
+
+static A3Entity tp_sound(A3World *w, const char *name, A3Vec3 pos, i32 builtin, f32 volume, b32 spatial, A3Entity parent) {
+    A3Entity e = a3_entity_create(w, name);
+    if (a3_entity_valid(w, parent)) a3_entity_set_parent(w, e, parent);
+    ((A3CTransform *)a3_component_add(w, e, A3_T_TRANSFORM))->position = pos;
+    A3CAudioSource *s = (A3CAudioSource *)a3_component_add(w, e, A3_T_AUDIO_SOURCE);
+    s->builtin = builtin;
+    s->volume = volume;
+    s->loop = 1;
+    s->spatial = spatial;
+    s->max_distance = 60.0f;
     return e;
 }
 
@@ -174,6 +188,7 @@ void ed_build_template_scene(A3World *w, i32 tpl) {
         }
         A3Entity car = tp_shape(w, "Car", A3_PRIM_CUBE, a3_v3(50, 0.6f, 0), a3_v3(1.8f, 0.8f, 4), a3_v4(0.9f, 0.15f, 0.15f, 1), 1, 1);
         ((A3CRigidBody *)a3_component_get(w, car, A3_T_RIGIDBODY))->mass = 1200;
+        tp_sound(w, "Engine Sound", a3_v3_zero(), A3_SOUND_ENGINE, 0.5f, 1, car);
         tp_camera(w, a3_v3(50, 4, 10), -15, 0);
     } break;
     case 5: /* Horror */
@@ -188,6 +203,7 @@ void ed_build_template_scene(A3World *w, i32 tpl) {
             tp_shape(w, "Wall", A3_PRIM_CUBE, a3_v3(2.5f, 1.5f, -i * 4.0f), a3_v3(0.3f, 3, 4), a3_v4(0.35f, 0.33f, 0.3f, 1), 1, 0);
         }
         tp_light(w, "Flickering Bulb", A3_LIGHT_POINT, a3_v3(0, 2.6f, -14), a3_v4(1, 0.6f, 0.3f, 1), 0.8f, 6);
+        tp_sound(w, "Wind", a3_v3_zero(), A3_SOUND_WIND, 0.35f, 0, A3_ENTITY_NULL);
         {
             A3Entity pl = tp_player(w, a3_v3(0, 0, 2), A3_CAM_FIRST_PERSON, 0);
             A3Entity cam = a3_entity_first_child(w, pl);
@@ -234,6 +250,7 @@ void ed_build_template_scene(A3World *w, i32 tpl) {
             tp_shape(w, "Rock", A3_PRIM_SPHERE, a3_v3(x, 0.4f, z), a3_v3(a3_rng_range_f32(&rng, 1, 3), 1.2f, a3_rng_range_f32(&rng, 1, 3)), stone, 1, 0);
         }
         tp_player(w, a3_v3(0, 0, 0), A3_CAM_THIRD_PERSON, 1);
+        tp_sound(w, "Wind", a3_v3_zero(), A3_SOUND_WIND, 0.25f, 0, A3_ENTITY_NULL);
     } break;
     }
 }

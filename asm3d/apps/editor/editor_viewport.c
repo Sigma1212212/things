@@ -3,6 +3,7 @@
  */
 #include "editor.h"
 #include "../../engine/physics/a3_physics.h"
+#include "../../engine/audio/a3_audio.h"
 #include "../../engine/resource/a3_assets.h"
 #include "../../engine/render/a3_mesh.h"
 #include "../../engine/core/a3_log.h"
@@ -650,6 +651,26 @@ void ed_viewport_panel(void *user, A3Ui *ui, A3Rect r) {
             } else a3_ui_notify(ui, a3_ui_theme(ui)->colors[A3_UIC_WARNING], "Drop the image onto an object to apply it");
         } else if (a3_streq(ext, ".a3scene")) {
             ed_scene_open(ed, path);
+        } else if (a3_streq(ext, ".wav")) {
+            /* onto an object: it plays the sound; onto empty space: a new sound emitter */
+            A3Entity target = under;
+            if (!a3_entity_valid(ed->world, target)) {
+                char name[64];
+                a3_path_stem(path, name, sizeof(name));
+                target = ed_create_entity(ed, name, A3_PRIM_NONE, 0);
+                A3CTransform *tt = a3_transform(ed->world, target);
+                if (tt) tt->position = drop_pos;
+            } else {
+                ed_select(ed, target);
+                ed_undo_begin_frame(ed);
+            }
+            A3CAudioSource *as = (A3CAudioSource *)a3_component_add(ed->world, target, A3_T_AUDIO_SOURCE);
+            if (as) {
+                a3_strcpy(as->clip.path, sizeof(as->clip.path), path);
+                as->clip.handle = 0;
+                ed_undo_mark_changed(ed, "Add Sound");
+                a3_ui_notify(ui, 0, "%s will play from %s", a3_path_filename(path), a3_entity_name(ed->world, target));
+            }
         }
     }
     /* keyboard shortcuts while the viewport has focus */

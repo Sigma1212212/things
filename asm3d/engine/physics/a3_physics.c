@@ -186,7 +186,7 @@ void a3_physics_register(void) {
     cc.height = 1.8f; cc.radius = 0.35f; cc.step_height = 0.35f; cc.slope_limit = 50.0f;
     cc.walk_speed = 4.5f; cc.sprint_speed = 7.5f; cc.jump_height = 1.2f; cc.gravity_scale = 1.0f;
     cc.air_control = 0.35f; cc.acceleration = 40.0f; cc.camera_mode = A3_CAM_FIRST_PERSON;
-    cc.mouse_sensitivity = 0.15f; cc.camera_distance = 4.0f; cc.eye_height = 1.65f; cc.use_input = 1;
+    cc.mouse_sensitivity = 0.15f; cc.camera_distance = 4.0f; cc.eye_height = 1.65f; cc.use_input = 1; cc.sounds = 1;
     t = a3_component_register("CharacterController", "Gameplay", sizeof(A3CCharacterController), 16, &cc, A3_COMP_BUILTIN,
         "A ready-to-play character: walking, running, jumping, stairs, slopes, mouse look and a camera. Controls: WASD, Space, Shift.");
     A3_T_CHARACTER = t;
@@ -210,6 +210,7 @@ void a3_physics_register(void) {
     a3_field_range(A3_REFLECT_FIELD(t, A3CCharacterController, acceleration, A3_FIELD_F32, "Acceleration", "How quickly the character reaches full speed."), 1, 500, 1)->flags |= A3_FIELD_FLAG_ADVANCED;
     a3_field_range(A3_REFLECT_FIELD(t, A3CCharacterController, gravity_scale, A3_FIELD_F32, "Gravity Scale", "Multiplier for world gravity."), 0, 10, 0.05f)->flags |= A3_FIELD_FLAG_ADVANCED;
     A3_REFLECT_FIELD(t, A3CCharacterController, use_input, A3_FIELD_BOOL, "Player Controlled", "Read the keyboard/mouse. Turn off to drive it from scripts or AI.");
+    A3_REFLECT_FIELD(t, A3CCharacterController, sounds, A3_FIELD_BOOL, "Footstep Sounds", "Plays built-in footstep, jump and landing sounds.");
     A3_REFLECT_FIELD(t, A3CCharacterController, grounded, A3_FIELD_BOOL, "On Ground", "Runtime state.")->flags |= A3_FIELD_FLAG_READONLY | A3_FIELD_FLAG_TRANSIENT;
 }
 

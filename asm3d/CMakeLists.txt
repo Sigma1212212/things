@@ -38,6 +38,7 @@ file(GLOB A3_SHARED_SOURCES CONFIGURE_DEPENDS
   engine/scene/*.c
   engine/input/*.c
   engine/physics/*.c
+  engine/audio/*.c
   engine/resource/*.c
   engine/ui/*.c
 )
@@ -56,7 +57,7 @@ set(A3_ENGINE_SOURCES
   engine/jobs/a3_jobs.c
 )
 if(A3_USE_ASM_ACTIVE)
-  list(APPEND A3_ENGINE_SOURCES engine/core/a3_simd_x64.S engine/physics/a3_physics_x64.S)
+  list(APPEND A3_ENGINE_SOURCES engine/core/a3_simd_x64.S engine/physics/a3_physics_x64.S engine/audio/a3_audio_x64.S)
 endif()
 
 add_library(asm3d_engine STATIC ${A3_ENGINE_SOURCES})

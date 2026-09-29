@@ -7,6 +7,7 @@
 #include "a3_engine.h"
 #include "../physics/a3_physics.h"
 #include "../physics/a3_character.h"
+#include "../audio/a3_audio.h"
 #include "../scene/a3_components.h"
 #include "../platform/a3_window.h"
 #include "../core/a3_string.h"
@@ -49,6 +50,21 @@ static void sys_character_input(A3SystemContext *ctx, void *user) {
     }
 }
 
+/* Built-in footsteps (every ~2 m, slightly varied pitch), jump and landing. */
+static void character_sounds(A3CCharacterController *cc, b32 jumped, b32 was_grounded, f32 fall_speed, f32 dt, u64 salt) {
+    static u32 steps, jumps;
+    if (!steps) { steps = a3_audio_clip("builtin:footstep"); jumps = a3_audio_clip("builtin:jump"); }
+    f32 pitch = 0.9f + 0.2f * (f32)((salt * 2654435761u) % 1000u) / 1000.0f;
+    if (jumped) { a3_audio_play(jumps, 0.35f, pitch, 0); cc->step_distance = 0; return; }
+    if (!was_grounded && cc->grounded && fall_speed > 3.0f) { a3_audio_play(steps, a3_minf(0.25f + fall_speed * 0.05f, 0.8f), 0.8f, 0); cc->step_distance = 0; return; }
+    if (!cc->grounded) return;
+    f32 speed = a3_sqrtf(cc->velocity.x * cc->velocity.x + cc->velocity.z * cc->velocity.z);
+    if (speed < 0.5f) { cc->step_distance = 1.2f; return; } /* the first step after stopping comes quickly */
+    cc->step_distance += speed * dt;
+    f32 stride = speed > cc->walk_speed * 1.2f ? 2.4f : 1.9f;
+    if (cc->step_distance >= stride) { a3_audio_play(steps, 0.3f, pitch, 0); cc->step_distance = 0; }
+}
+
 static void sys_character_move(A3SystemContext *ctx, void *user) {
     A3_UNUSED(user);
     u32 n = 0;
@@ -67,12 +83,21 @@ static void sys_character_move(A3SystemContext *ctx, void *user) {
             if (jump) cc->jump_buffer = 0;
             cc->jump_buffer = a3_maxf(cc->jump_buffer - ctx->dt, 0.0f);
         }
+        b32 was_grounded = cc->grounded;
+        f32 fall_speed = -cc->velocity.y;
         a3_character_move(ctx->world, e, cc, move, jump, sprint, ctx->dt);
+        if (cc->sounds) character_sounds(cc, jump, was_grounded, fall_speed, ctx->dt, ctx->frame + i);
     }
 }
 
+/* ---- audio ---- */
+
+static void sys_audio(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_audio_update_world(ctx->world); }
+static void sys_audio_stop(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_audio_stop_world(ctx->world); }
+
 void a3_modules_register_all(void) {
     a3_physics_register();
+    a3_audio_register();
     A3SystemDesc d;
     a3_zero_struct(&d);
     d.name = "Character Input";
@@ -94,5 +119,13 @@ void a3_modules_register_all(void) {
     d.order = 100;
     d.update = sys_physics;
     d.on_stop = sys_physics_stop;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "Audio";
+    d.phase = A3_PHASE_LATE;
+    d.order = 100;
+    d.update = sys_audio;
+    d.on_stop = sys_audio_stop;
     a3_systems_register(&d);
 }
