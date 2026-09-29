@@ -14,6 +14,11 @@
 
 const char *const a3_eprim_names[A3_EPRIM_COUNT] = { "cube", "plane", "grid", "cylinder", "cone", "sphere", "torus" };
 
+i32 a3_emesh_primitive_from_name(const char *name) {
+    for (u32 i = 0; i < A3_EPRIM_COUNT; ++i) if (name && a3_streq(a3_eprim_names[i], name)) return (i32)i;
+    return -1;
+}
+
 /* ======================================================================== */
 /* Lifetime and building                                                    */
 /* ======================================================================== */

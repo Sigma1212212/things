@@ -80,6 +80,7 @@ typedef enum A3EPrimitive {
     A3_EPRIM_CUBE = 0, A3_EPRIM_PLANE, A3_EPRIM_GRID, A3_EPRIM_CYLINDER, A3_EPRIM_CONE, A3_EPRIM_SPHERE, A3_EPRIM_TORUS, A3_EPRIM_COUNT
 } A3EPrimitive;
 extern const char *const a3_eprim_names[A3_EPRIM_COUNT];
+i32  a3_emesh_primitive_from_name(const char *name);   /* -1 when unknown */
 /* size = overall size (cube edge, diameter...); segments / rings where relevant (clamped). */
 void a3_emesh_make(A3EMesh *m, A3EPrimitive prim, f32 size, u32 segments, u32 rings);
 /* Adds a primitive to the existing mesh, selected, at `center`. */

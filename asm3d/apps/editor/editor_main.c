@@ -12,6 +12,8 @@
  * and captured automatically (docs screenshots, CI smoke tests).
  */
 #include "editor.h"
+#include "../../engine/modeling/a3_emesh.h"
+#include "../../engine/resource/a3_assets.h"
 #include "../../engine/script/a3_script_engine.h"
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
@@ -29,7 +31,7 @@
 #define TOOLBAR_H 40.0f
 #define STATUS_H 24.0f
 
-const char *const g_ed_layouts[] = { "Default", "Beginner", "Programming", "Level Design", "Shader Design" };
+const char *const g_ed_layouts[] = { "Default", "Beginner", "Programming", "Level Design", "Shader Design", "Modeling" };
 const u32 g_ed_layout_count = A3_ARRAY_COUNT(g_ed_layouts);
 
 /* ======================================================================== */
@@ -131,6 +133,7 @@ void ed_play(A3Editor *ed) {
     if (ed->mode != ED_EDIT) return;
     if (!ed->world) return;
     ed_anim_flush(ed); /* the game must start from the real scene, not an animation preview */
+    ed_model_exit(ed, 1); /* and with the edited mesh saved */
     ed_undo_end_frame(ed);
     ed->play_world = a3_world_clone(ed->world, "Play");
     if (!ed->play_world) { A3_ERROR("editor", "could not start play mode (out of memory)"); return; }
@@ -205,6 +208,22 @@ void ed_layout_preset(A3Editor *ed, const char *name) {
         a3_dock_add_tab(d, rbottom, P("Hierarchy"));
         a3_dock_add_tab(d, rbottom, P("Docs"));
         d->nodes[rbottom].active = 0;
+    } else if (a3_streq(name, "Modeling")) {
+        /* big viewport, tools on the right */
+        i32 right = a3_dock_split(d, root, 1, 0.74f, 1);
+        i32 left = d->nodes[root].child[0];
+        i32 bottom = a3_dock_split(d, left, 0, 0.82f, 1);
+        i32 main = d->nodes[left].child[0];
+        a3_dock_add_tab(d, main, P("Viewport"));
+        a3_dock_add_tab(d, bottom, P("Assets"));
+        a3_dock_add_tab(d, bottom, P("Console"));
+        d->nodes[bottom].active = 0;
+        i32 rbottom = a3_dock_split(d, right, 0, 0.64f, 1);
+        i32 rtop = d->nodes[right].child[0];
+        a3_dock_add_tab(d, rtop, P("Modeling"));
+        a3_dock_add_tab(d, rbottom, P("Inspector"));
+        a3_dock_add_tab(d, rbottom, P("Hierarchy"));
+        d->nodes[rbottom].active = 0;
     } else if (a3_streq(name, "Shader Design")) {
         i32 right = a3_dock_split(d, root, 1, 0.76f, 1);
         i32 left = d->nodes[root].child[0];
@@ -231,6 +250,7 @@ void ed_layout_preset(A3Editor *ed, const char *name) {
         a3_dock_add_tab(d, view, P("Viewport"));
         if (!level) { a3_dock_add_tab(d, view, P("Code")); a3_dock_add_tab(d, view, P("Shader Maker")); d->nodes[view].active = 0; }
         a3_dock_add_tab(d, right, P("Inspector"));
+        a3_dock_add_tab(d, right, P("Modeling"));
         a3_dock_add_tab(d, right, P("Settings"));
         a3_dock_add_tab(d, right, P("Build"));
         d->nodes[right].active = 0;
@@ -638,6 +658,12 @@ static void shortcuts(A3Editor *ed, A3Ui *ui) {
     if (ctrl && in->keys_pressed[A3_KEY_Q]) ed->quit = 1;
     if (a3_ui_wants_keyboard(ui) || in->mouse_captured) return; /* text fields get the remaining keys */
     if (ctrl && in->keys_pressed[A3_KEY_S]) ed_scene_save(ed);
+    if (ed_model_active(ed)) {
+        /* Edit Mode: undo is per mesh edit; the viewport handles the modeling keys */
+        if (ctrl && in->keys_pressed[A3_KEY_Z]) { if (shift) ed_model_redo(ed); else ed_model_undo(ed); }
+        if (ctrl && in->keys_pressed[A3_KEY_Y]) ed_model_redo(ed);
+        return;
+    }
     if (ctrl && in->keys_pressed[A3_KEY_Z]) { if (shift) ed_redo(ed); else ed_undo(ed); }
     if (ctrl && in->keys_pressed[A3_KEY_Y]) ed_redo(ed);
     if (ctrl && in->keys_pressed[A3_KEY_D]) ed_duplicate_selected(ed);
@@ -665,6 +691,7 @@ static void register_panels(A3Editor *ed) {
     a3_dock_add_panel(d, "Settings", A3_ICON_GEAR, ed_settings_panel, ed, 0);
     a3_dock_add_panel(d, "Build", A3_ICON_PLAY, ed_build_panel, ed, 0);
     a3_dock_add_panel(d, "Code", A3_ICON_PENCIL, ed_code_panel, ed, A3_PANEL_NO_SCROLL);
+    a3_dock_add_panel(d, "Modeling", A3_ICON_CUBE, ed_model_panel, ed, 0);
     a3_dock_add_panel(d, "Shader Maker", A3_ICON_DIAMOND, ed_shader_panel, ed, A3_PANEL_NO_SCROLL);
     a3_dock_add_panel(d, "Animation", A3_ICON_RIGHT, ed_anim_panel, ed, A3_PANEL_NO_SCROLL);
 }
@@ -885,6 +912,37 @@ static int selftest_run(A3Editor *ed, const char *tmp) {
         ST_CHECK(ed_validate_project(ed, 0, &se, &sw) && se == 1);
         a3_file_delete(bp);
     }
+    /* Edit Mode: convert a cube, extrude its top, undo/redo, save the model */
+    {
+        A3Entity mc = ed_create_entity(ed, "Tower", A3_PRIM_CUBE, 0);
+        ed_undo_end_frame(ed);
+        ed_select(ed, mc);
+        u64 mg = a3_entity_guid(ed->world, mc);
+        ST_CHECK(ed_model_enter(ed) && ed_model_active(ed));
+        const A3EMesh *em = ed_model_mesh(ed);
+        ST_CHECK(em && a3_emesh_vertex_count(em) == 8 && a3_emesh_face_count(em) == 6);
+        ST_CHECK(ed_model_run(ed, "mode:face") && ed_model_run(ed, "select-none") && ed_model_run(ed, "select-normal:0,1,0"));
+        ST_CHECK(ed_model_run(ed, "extrude:1") && a3_emesh_face_count(ed_model_mesh(ed)) == 10);
+        ST_CHECK(ed_model_run(ed, "inset:0.3") && a3_emesh_face_count(ed_model_mesh(ed)) == 14);
+        ST_CHECK(!ed_model_run(ed, "extrud:1"));                        /* unknown op: nothing changes */
+        ST_CHECK(a3_emesh_face_count(ed_model_mesh(ed)) == 14);
+        ST_CHECK(ed_model_undo(ed) && a3_emesh_face_count(ed_model_mesh(ed)) == 10);
+        ST_CHECK(ed_model_redo(ed) && a3_emesh_face_count(ed_model_mesh(ed)) == 14);
+        /* the viewport shows the edited mesh right away */
+        A3CMeshRenderer *mmr = (A3CMeshRenderer *)a3_component_get(ed->world, a3_entity_find_by_guid(ed->world, mg), A3_T_MESH_RENDERER);
+        ST_CHECK(mmr && mmr->primitive == A3_PRIM_NONE && a3_streq(mmr->mesh.path, "Assets/Models/Tower.obj"));
+        const A3MeshAsset *ma = a3_assets_mesh_get(a3_assets_mesh_for_renderer(mmr));
+        ST_CHECK(ma && ma->cpu.index_count == 28 * 3);                  /* 14 quads = 28 triangles */
+        ed_model_exit(ed, 1);
+        ST_CHECK(!ed_model_active(ed));
+        char mp[ED_PATH];
+        ed_project_path(ed, "Assets/Models/Tower.obj", mp, sizeof(mp));
+        ST_CHECK(a3_file_exists(mp));
+        /* reopening reads the saved polygons back */
+        ed_select(ed, a3_entity_find_by_guid(ed->world, mg));
+        ST_CHECK(ed_model_enter(ed) && a3_emesh_face_count(ed_model_mesh(ed)) == 14);
+        ed_model_exit(ed, 0);
+    }
     /* save + reopen */
     ST_CHECK(ed_scene_save(ed));
     u32 saved_count = a3_world_entity_count(ed->world);
@@ -962,7 +1020,8 @@ static int selftest(A3Editor *ed) {
 /* ======================================================================== */
 
 int main(int argc, char **argv) {
-    const char *project = 0, *new_name = 0, *new_loc = 0, *layout = 0, *shot = 0, *select = 0, *show = 0, *open_file = 0;
+    const char *project = 0, *new_name = 0, *new_loc = 0, *layout = 0, *shot = 0, *select = 0, *show = 0, *open_file = 0, *mesh_ops = 0;
+    b32 edit_mesh = 0;
     int frames = -1, width = 1600, height = 900, tpl = 0;
     b32 hidden = 0, beginner = 0, advanced = 0, light = 0, run_selftest = 0, build_only = 0;
     i32 play_at = -1, shader_preset = -1;
@@ -981,6 +1040,8 @@ int main(int argc, char **argv) {
         else if (a3_streq(a, "--open") && more) open_file = argv[++i];
         else if (a3_streq(a, "--play-at") && more) play_at = atoi(argv[++i]);
         else if (a3_streq(a, "--shader-preset") && more) shader_preset = atoi(argv[++i]);
+        else if (a3_streq(a, "--edit-mesh")) edit_mesh = 1;
+        else if (a3_streq(a, "--mesh-ops") && more) { mesh_ops = argv[++i]; edit_mesh = 1; }
         else if (a3_streq(a, "--hidden")) hidden = 1;
         else if (a3_streq(a, "--beginner")) beginner = 1;
         else if (a3_streq(a, "--advanced")) advanced = 1;
@@ -997,7 +1058,7 @@ int main(int argc, char **argv) {
                 "usage: asm3d_editor [--project DIR] [--new NAME --location DIR --template N] [--layout NAME]\n"
                 "                    [--beginner|--advanced] [--light] [--select NAME] [--show PANEL] [--open FILE]\n"
                 "                    [--play-at N] [--shader-preset N] [--frames N --screenshot FILE] [--hidden] [--size WxH]\n"
-                "                    [--selftest] [--build]\n";
+                "                    [--edit-mesh] [--mesh-ops \"op;op\"] [--selftest] [--build]\n";
             a3_console_write(A3_LOG_INFO, usage, sizeof(usage) - 1);
             return 0;
         }
@@ -1078,6 +1139,15 @@ int main(int argc, char **argv) {
                 if (a3_entity_valid(ed->world, e)) { ed_select(ed, e); ed_focus_selected(ed); }
                 else A3_WARN("editor", "--select: no entity named '%s'", select);
             }
+            if (ed->frame == 3 && edit_mesh && ed->world && ed_model_enter(ed) && mesh_ops) {
+                char buf[1024];
+                a3_strcpy(buf, sizeof(buf), mesh_ops);
+                for (char *tok = buf, *next; tok && *tok; tok = next) {
+                    next = (char *)a3_strchr(tok, ';');
+                    if (next) *next++ = 0;
+                    if (!ed_model_run(ed, tok)) A3_WARN("editor", "--mesh-ops: '%s' failed", tok);
+                }
+            }
             if (ed->frame == ed->play_at_frame && ed->has_project) ed_play(ed);
             editor_frame(ed, dt);
             ed->frame++;
@@ -1095,6 +1165,7 @@ done:
     ed_viewport_shutdown(ed);
     ed_shader_shutdown(ed);
     ed_anim_shutdown(ed);
+    ed_model_shutdown(ed);
     ed_code_free(ed);
     ed_undo_free(&ed->undo);
     a3_ui_destroy(ed->ui);

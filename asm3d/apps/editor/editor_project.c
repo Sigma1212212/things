@@ -522,6 +522,7 @@ b32 ed_project_open(A3Editor *ed, const char *dir) {
 }
 
 void ed_project_close(A3Editor *ed) {
+    ed_model_exit(ed, 1);
     if (ed->mode != ED_EDIT) ed_stop(ed);
     if (ed->has_project) ed_anim_flush(ed);
     if (ed->has_project) {

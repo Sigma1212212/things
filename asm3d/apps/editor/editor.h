@@ -169,6 +169,8 @@ typedef struct A3Editor {
     A3InputState game_input;
     /* shader maker state (editor_shader.c) */
     struct EdShader *shader;
+    /* Edit Mode / modeling state (editor_model.c) */
+    struct EdModel *model;
     /* automation (screenshots / smoke tests) */
     i32 frame;
     i32 play_at_frame;
@@ -193,6 +195,18 @@ void ed_build_template_scene(A3World *w, i32 template_index);
 /* selection helpers (editor_main.c) */
 A3World *ed_active_world(A3Editor *ed);
 const char *ed_script_template(void);
+/* modeling (editor_model.c) */
+struct A3EMesh;
+b32  ed_model_active(A3Editor *ed);
+b32  ed_model_enter(A3Editor *ed);                /* Edit Mode on the selected object */
+void ed_model_exit(A3Editor *ed, b32 save);
+b32  ed_model_undo(A3Editor *ed);
+b32  ed_model_redo(A3Editor *ed);
+b32  ed_model_run(A3Editor *ed, const char *op);  /* named operation, as in 'asm3d_cli mesh ops' */
+const struct A3EMesh *ed_model_mesh(A3Editor *ed);
+b32  ed_model_viewport(A3Editor *ed, A3Ui *ui, const A3Mat4 *view_proj, b32 input_ok);
+void ed_model_panel(void *user, A3Ui *ui, A3Rect r);
+void ed_model_shutdown(A3Editor *ed);
 A3Entity ed_selected(A3Editor *ed);
 void ed_select(A3Editor *ed, A3Entity e);
 A3Entity ed_create_entity(A3Editor *ed, const char *name, A3Primitive prim, const char *component);

@@ -2,7 +2,8 @@
 
 ASM3D is a desktop game engine and editor written in C11. The hot paths are
 x86-64 assembly: SIMD math, frustum culling, the physics integrator,
-broadphase, solver and raycasts, the audio mixer and particle simulation.
+broadphase, solver and raycasts, the audio mixer, particle simulation and
+the modeling kernels (polygon modeling in the editor: [docs/MODELING.md](docs/MODELING.md)).
 Gameplay is written in A3Script, the engine's own scripting language
 ([docs/SCRIPTING.md](docs/SCRIPTING.md)). The engine and editor have no third-party
 code or libraries (only the OS windowing API and OpenGL from the system). It runs on Windows and Linux.
@@ -66,6 +67,7 @@ engine/audio     mixer (x86-64 kernels), WAV, WASAPI / ALSA output
 engine/particles emitters, x86-64 integration kernel
 engine/anim      keyframe clips, Animator, Motion
 engine/script    A3Script compiler, VM, standard library, engine bindings, HUD
+engine/modeling  editable polygon meshes and modeling tools, x86-64 kernels
 engine/render    RHI (OpenGL / null), PBR renderer, shader graph compiler
 engine/ui        immediate-mode UI toolkit, docking
 engine/runtime   engine loop, systems, modules

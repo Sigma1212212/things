@@ -41,6 +41,7 @@ listed. **Planned** = not implemented yet.
 | Animation: keyframe clips, Animator, Motion, timeline editor | Working | Tracks animate any reflected field (transform, light, colors, custom components) with smooth, linear or step keys. |
 | Skeletal animation (bones, skinning, blending) | Planned | Needs glTF import. |
 | Particles: emitters, 10 presets, instanced billboards | Working | SSE assembly integration kernel (bit-exact C reference). Additive and alpha-sorted blending; previewed live in the editor. GPU simulation and collision are planned. |
+| Modeling library (editable polygon meshes) | Working | x86-64 SSE kernels (masked transform, triangle normals, ray picking, bounds) with bit-exact C references; operations listed in docs/MODELING.md. |
 | Scripting (A3Script) | Working | Bytecode compiler + stack VM (C). Script component with on_start / on_update / on_fixed_update / on_trigger_enter / on_trigger_exit / on_collision; any component field readable and writable by name; 97 built-in functions (math, vectors, lists, text, objects, input, physics, sound, particles, animation, HUD, scenes, saved values); hot reload that keeps variables; instruction budget against endless loops; plain-language errors with line numbers and "did you mean" suggestions. See docs/SCRIPTING.md. Not yet: dictionaries/maps, closures, classes, a debugger with breakpoints. |
 | Script HUD (text, rectangles, bars) | Working | Drawn over the game window and the editor viewport on a 1280 x 720 canvas. Text is a scaled bitmap font (large sizes look soft). |
 | Visual scripting | Planned | |
@@ -68,6 +69,7 @@ listed. **Planned** = not implemented yet.
 | Shader Maker: node graph, live preview, parameters, errors shown on nodes | Working | |
 | One-click desktop build (Windows or Linux, the OS the editor runs on) with project checks | Working | Debug/Release only change the folder name for now. |
 | Animation timeline panel | Working | Key, scrub, preview (the object is restored afterwards), drag keys, set interpolation. |
+| Edit Mode (polygon modeling) | Working | Vertex/edge/face selection, box select, edge loops, G/R/S with axis locks and snapping, extrude, inset, loop cut, Catmull-Clark, delete, fill, merge, duplicate, mirror, normals, per-mesh undo. See docs/MODELING.md. Not yet: bevel, knife, booleans, UV unwrapping, sculpting. |
 | Visual script editor, terrain tools | Planned | |
 
 ## Command line (`asm3d_cli`)
@@ -90,16 +92,17 @@ collect 12 orbs, with a HUD counter, a timer and a best time saved between runs.
 
 ## How this is verified
 
-- `asm3d_tests`: 70 tests (unit, determinism golden hashes, physics
+- `asm3d_tests`: 75 tests (unit, determinism golden hashes, physics
   scenarios, shader graph, audio, particles, animation, the scripting
-  language and its engine bindings). They run natively and as WebAssembly
+  language and its engine bindings, the modeling kernels and operations). They run natively and as WebAssembly
   (`node tools/run_wasm_tests.mjs build/asm3d_tests.wasm`).
-- `tools/test_cli.py`: 64 end-to-end checks of `asm3d_cli` (Linux and
+- `tools/test_cli.py`: 79 end-to-end checks of `asm3d_cli` (Linux and
   Windows builds).
 - `asm3d_editor --selftest`: drives the real editor end to end. It creates a
   project, runs undo/redo, play/stop, save/reopen and a build, compiles every
   Shader Maker preset on the GPU, checks that shader errors are mapped to
   the right node, runs a script in play mode (including hot reload and error
-  markers) and collects an orb in the scripted Platformer template (56 checks).
+  markers), models a tower in Edit Mode and collects an orb in the scripted
+  Platformer template (70 checks).
 - `asm3d_player --frames N --screenshot out.png` and
   `asm3d_editor --frames N --screenshot out.png` are used for visual checks.

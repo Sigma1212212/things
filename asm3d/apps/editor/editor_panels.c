@@ -921,6 +921,17 @@ static const DocTopic g_topics[] = {
       "error, the Console shows the file, line and a plain explanation (often with a 'did you mean' suggestion); only that object's "
       "script stops, and fixing the file restarts it.\n\n"
       "Every built-in function is listed under Script API below." },
+    { "Modeling",
+      "Edit Mode changes the shape of an object, polygon by polygon, like in dedicated 3D modeling programs.\n\n"
+      "Select an object and press Tab (or Modeling > Edit Selected Mesh). Primitives become a model file in Assets/Models.\n"
+      "1 / 2 / 3: vertex, edge or face selection. Click to select, Shift+click to add, drag for a box, double-click an edge for its loop. "
+      "A selects all, Alt+A nothing, L connected parts, Ctrl+I inverts.\n"
+      "G move, R rotate, S scale: move the mouse, press X, Y or Z to lock an axis, hold Ctrl to snap, click to confirm, right click to cancel.\n"
+      "E extrude the selected faces (then move the mouse), I inset, Ctrl+R loop cut (wheel for more cuts), Ctrl+2 smooth subdivision, "
+      "X delete, F fill a hole, M merge close vertices, Shift+D duplicate, Shift+N fix normals, Alt+Z X-ray.\n"
+      "Ctrl+Z undoes mesh edits while in Edit Mode. Tab saves the model and returns to the scene.\n\n"
+      "The heavy math (moving thousands of vertices, normals, picking faces with the mouse) runs in hand-written x86-64 assembly. "
+      "Not available yet: bevel, knife, booleans, UV unwrapping and sculpting. The same operations are scriptable with 'asm3d_cli mesh edit'." },
     { "Keyboard Shortcuts",
       "Ctrl+S save   Ctrl+Z undo   Ctrl+Y redo   Ctrl+D duplicate   Delete remove\n"
       "W move tool   E rotate tool   R scale tool   F focus   Ctrl while dragging: snap\n"
@@ -930,10 +941,10 @@ static const DocTopic g_topics[] = {
     { "What Works Today",
       "ASM3D is honest about its status. Working now: the editor, scenes, undo/redo, autosave and crash recovery, the PBR renderer "
       "with shadows, physics with assembly kernels, the character controller, audio (assembly mixer), keyframe animation, particles "
-      "(assembly simulation), the A3Script scripting language with HUD drawing, templates, the code editor, the Shader Maker and "
-      "desktop builds for Windows and Linux.\n\n"
-      "Not implemented yet: visual scripting, terrain and world streaming, AI navigation, vehicles, weather, skeletal animation and "
-      "macOS. docs/STATUS.md in the engine source lists exactly what is implemented, partial and planned." },
+      "(assembly simulation), the A3Script scripting language with HUD drawing, polygon modeling (Edit Mode), the asm3d_cli command line, "
+      "templates, the code editor, the Shader Maker and desktop builds for Windows and Linux.\n\n"
+      "Not implemented yet: visual scripting, terrain and world streaming, AI navigation, vehicles, weather, skeletal animation, "
+      "bevel/booleans/UV unwrapping in the modeler and macOS. docs/STATUS.md in the engine source lists exactly what is implemented, partial and planned." },
 };
 
 #define DOC_API_BASE 100000

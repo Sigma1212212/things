@@ -57,4 +57,4 @@ asm3d_cli simulate MyGame --frames 120 --watch Crate
 asm3d_cli build MyGame
 ```
 
-Tested by `tools/test_cli.py` (64 checks, Linux and Windows).
+Tested by `tools/test_cli.py` (79 checks, Linux and Windows).

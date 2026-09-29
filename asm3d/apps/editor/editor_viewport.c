@@ -596,12 +596,21 @@ void ed_viewport_panel(void *user, A3Ui *ui, A3Rect r) {
     A3Mat4 vp = current_view_proj(ed);
     viewport_toolbar(ed, ui, full);
     b32 over_toolbar = a3_rect_contains(a3_rect(full.x + 8, full.y + 8, 330, 32), in->mouse_pos);
-    if (!over_toolbar) {
+    b32 modeling = ed_model_active(ed);
+    if (!over_toolbar && !modeling) {
         gizmo(ed, ui);
         icon_overlays(ed, ui, &vp);
     }
     a3_ui_invisible_button(ui, "viewport_area", hit);
     b32 ui_blocked = !a3_ui_item_hovered(ui);
+    if (modeling) {
+        /* Edit Mode: the modeling tools own the mouse and keys (camera controls still work) */
+        b32 input_ok = !ui_blocked && !over_toolbar;
+        ed_model_viewport(ed, ui, &vp, input_ok);
+        if (!ui_blocked) camera_controls(ed, ui, a3_maxf(1.0f / 240.0f, ed->fps > 0 ? 1.0f / ed->fps : 1.0f / 60.0f));
+        ed->game_focused = 0;
+        return;
+    }
     /* while playing, the game receives input when the pointer is over the viewport */
     ed->game_focused = ed->mode == ED_PLAY && !ui_blocked && !over_toolbar;
     if (!ui_blocked) {
@@ -677,6 +686,7 @@ void ed_viewport_panel(void *user, A3Ui *ui, A3Rect r) {
     }
     /* keyboard shortcuts while the viewport has focus */
     if (ed->vp_hovered && !a3_ui_wants_keyboard(ui) && !ed->cam_flying) {
+        if (in->keys_pressed[A3_KEY_TAB] && ed->mode == ED_EDIT) ed_model_enter(ed);
         if (in->keys_pressed[A3_KEY_W]) ed->gizmo = ED_GIZMO_MOVE;
         if (in->keys_pressed[A3_KEY_E]) ed->gizmo = ED_GIZMO_ROTATE;
         if (in->keys_pressed[A3_KEY_R]) ed->gizmo = ED_GIZMO_SCALE;
