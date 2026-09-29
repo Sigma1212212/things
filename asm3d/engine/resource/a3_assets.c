@@ -11,6 +11,11 @@
 
 #define MAX_MESHES 4096
 #define MAX_TEXTURES 4096
+#define MAX_MESH_GENERATORS 64
+
+typedef struct MeshGen { char path[64]; A3MeshGenerator fn; } MeshGen;
+static MeshGen g_mesh_gens[MAX_MESH_GENERATORS];
+static u32 g_mesh_gen_count;
 
 static struct {
     char root[A3_PATH_MAX];
@@ -181,6 +186,23 @@ u32 a3_assets_mesh_primitive(A3Primitive p) {
     return g_assets.primitives[p];
 }
 
+static A3MeshGenerator find_generator(const char *path) {
+    for (u32 i = 0; i < g_mesh_gen_count; ++i) if (a3_streq(g_mesh_gens[i].path, path)) return g_mesh_gens[i].fn;
+    return 0;
+}
+
+b32 a3_assets_register_mesh_generator(const char *path, A3MeshGenerator fn) {
+    if (!path || !fn || a3_strlen(path) >= sizeof(g_mesh_gens[0].path)) return 0;
+    for (u32 i = 0; i < g_mesh_gen_count; ++i)
+        if (a3_streq(g_mesh_gens[i].path, path)) { g_mesh_gens[i].fn = fn; return 1; }
+    if (g_mesh_gen_count >= MAX_MESH_GENERATORS) { A3_ERROR("assets", "too many mesh generators (max %d)", MAX_MESH_GENERATORS); return 0; }
+    a3_strcpy(g_mesh_gens[g_mesh_gen_count].path, sizeof(g_mesh_gens[0].path), path);
+    g_mesh_gens[g_mesh_gen_count++].fn = fn;
+    return 1;
+}
+
+b32 a3_assets_has_mesh_generator(const char *path) { return path && find_generator(path) != 0; }
+
 static b32 load_mesh_file(A3MeshAsset *m) {
     char full[1024];
     a3_assets_path(m->path, full, sizeof(full));
@@ -213,10 +235,21 @@ u32 a3_assets_mesh(const char *path) {
     }
     u32 id = find_mesh(path);
     if (id) return id;
+    A3MeshGenerator gen = find_generator(path);
+    if (gen) {
+        A3MeshData md;
+        a3_zero_struct(&md);
+        if (gen(&md)) return a3_assets_mesh_from_data(path, &md);
+        a3_mesh_free(&md);
+    }
     id = new_mesh_slot(path);
     if (!id) return 0;
     A3MeshAsset *m = &g_assets.meshes[id];
-    if (load_mesh_file(m)) {
+    if (gen) {
+        m->state = A3_ASSET_STATE_FAILED;
+        a3_snprintf(m->error, sizeof(m->error), "procedural mesh generator failed");
+        A3_ERROR("assets", "mesh '%s': procedural generator failed, showing a cube", path);
+    } else if (load_mesh_file(m)) {
         finish_mesh(m);
         A3_INFO("assets", "loaded mesh '%s' (%u vertices, %u triangles)", path, m->cpu.vertex_count, m->cpu.index_count / 3);
     } else {

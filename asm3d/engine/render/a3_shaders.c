@@ -16,8 +16,12 @@ const char *A3_SHADER_LIT_VS =
     "layout(location=7) in vec4 i_m3;\n"
     "layout(location=8) in vec4 i_color;\n"
     "layout(location=9) in vec4 i_params;\n"
+    "layout(location=10) in vec4 i_lights0;\n"
+    "layout(location=11) in vec4 i_lights1;\n"
     "uniform mat4 u_view_proj;\n"
     "uniform mat4 u_light_view_proj;\n"
+    "flat out vec4 v_lights0;\n"
+    "flat out vec4 v_lights1;\n"
     "out vec3 v_world_pos;\n"
     "out vec3 v_normal;\n"
     "out vec2 v_uv;\n"
@@ -37,6 +41,8 @@ const char *A3_SHADER_LIT_VS =
     "    v_params = i_params;\n"
     "    v_shadow_pos = u_light_view_proj * wp;\n"
     "    v_local_pos = a_position;\n"
+    "    v_lights0 = i_lights0;\n"
+    "    v_lights1 = i_lights1;\n"
     "    gl_Position = u_view_proj * wp;\n"
     "}\n";
 
@@ -48,7 +54,10 @@ const char *A3_SHADER_LIT_FS_HEAD =
     "in vec4 v_params;\n"
     "in vec4 v_shadow_pos;\n"
     "in vec3 v_local_pos;\n"
-    "out vec4 o_color;\n"
+    "flat in vec4 v_lights0;\n"
+    "flat in vec4 v_lights1;\n"
+    "layout(location=0) out vec4 o_color;\n"
+    "layout(location=1) out vec4 o_normal;\n"   /* world normal * 0.5 + 0.5, roughness (for SSAO / SSR) */
     "uniform sampler2D u_albedo_tex;\n"
     "uniform int u_has_texture;\n"
     "uniform sampler2DShadow u_shadow_map;\n"
@@ -59,15 +68,14 @@ const char *A3_SHADER_LIT_FS_HEAD =
     "uniform vec3 u_sun_dir;\n"          /* direction the light travels */
     "uniform vec3 u_sun_color;\n"
     "uniform vec3 u_sky_color;\n"
+    "uniform vec3 u_sky_horizon;\n"
     "uniform vec3 u_ground_color;\n"
     "uniform float u_ambient;\n"
     "uniform vec3 u_fog_color;\n"
     "uniform float u_fog_density;\n"
-    "#define A3_MAX_LIGHTS 16\n"
-    "uniform int u_light_count;\n"
-    "uniform vec4 u_light_pos[A3_MAX_LIGHTS];\n"     /* xyz position, w range */
-    "uniform vec4 u_light_color[A3_MAX_LIGHTS];\n"   /* rgb * intensity, w type (1 point, 2 spot) */
-    "uniform vec4 u_light_dir[A3_MAX_LIGHTS];\n"     /* xyz spot direction, w cos(outer half angle) */
+    /* local lights: 256 per row, 3 texels each (position + range, color + type, spot direction + cos) */
+    "uniform sampler2D u_light_tex;\n"
+    "uniform int u_fog_in_post;\n"
     "uniform vec4 u_material[4];\n"                  /* custom material parameters (Shader Maker) */
     "uniform sampler2D u_tex1;\n"
     "uniform sampler2D u_tex2;\n"
@@ -97,7 +105,7 @@ const char *A3_SHADER_LIT_FS_TAIL =
     "/* ---- lighting ---- */\n"
     "float a3_distribution_ggx(float ndh, float r) { float a = r * r; float a2 = a * a; float d = ndh * ndh * (a2 - 1.0) + 1.0; return a2 / (PI * d * d + 1e-6); }\n"
     "float a3_geometry(float ndv, float ndl, float r) { float k = (r + 1.0); k = k * k / 8.0; return (ndv / (ndv * (1.0 - k) + k)) * (ndl / (ndl * (1.0 - k) + k)); }\n"
-    "vec3 a3_fresnel(float c, vec3 f0) { return f0 + (1.0 - f0) * pow(1.0 - c, 5.0); }\n"
+    "vec3 a3_fresnel(float c, vec3 f0) { return f0 + (1.0 - f0) * pow(clamp(1.0 - c, 0.0, 1.0), 5.0); }\n"
     "vec3 a3_brdf(A3Surface s, vec3 l, vec3 radiance) {\n"
     "    vec3 n = s.normal, v = s.view_dir, h = normalize(l + v);\n"
     "    float ndl = max(dot(n, l), 0.0); if (ndl <= 0.0) return vec3(0.0);\n"
@@ -105,7 +113,7 @@ const char *A3_SHADER_LIT_FS_TAIL =
     "    float r = clamp(s.roughness, 0.04, 1.0);\n"
     "    vec3 f0 = mix(vec3(0.04), s.albedo, s.metallic);\n"
     "    vec3 f = a3_fresnel(max(dot(h, v), 0.0), f0);\n"
-    "    vec3 spec = a3_distribution_ggx(ndh, r) * a3_geometry(ndv, ndl, r) * f / (4.0 * ndv * ndl + 1e-4);\n"
+    "    vec3 spec = min(a3_distribution_ggx(ndh, r) * a3_geometry(ndv, ndl, r) * f / (4.0 * ndv * ndl + 1e-4), vec3(40.0));\n"
     "    vec3 kd = (1.0 - f) * (1.0 - s.metallic);\n"
     "    return (kd * s.albedo / PI + spec) * radiance * ndl;\n"
     "}\n"
@@ -132,31 +140,44 @@ const char *A3_SHADER_LIT_FS_TAIL =
     "    /* sun */\n"
     "    color += a3_brdf(s, -u_sun_dir, u_sun_color) * a3_shadow(s.normal);\n"
     "    /* local lights */\n"
-    "    for (int i = 0; i < u_light_count; ++i) {\n"
-    "        vec3 lv = u_light_pos[i].xyz - s.world_pos; float d = length(lv); vec3 l = lv / max(d, 1e-4);\n"
-    "        float range = u_light_pos[i].w;\n"
+    "    for (int k = 0; k < 8; ++k) {\n"
+    "        float fi = k < 4 ? v_lights0[k] : v_lights1[k - 4];\n"
+    "        if (fi < 0.0) break;\n"
+    "        int li = int(fi + 0.5);\n"
+    "        ivec2 base = ivec2((li % 256) * 3, li / 256);\n"
+    "        vec4 lp = texelFetch(u_light_tex, base, 0);\n"
+    "        vec4 lc = texelFetch(u_light_tex, base + ivec2(1, 0), 0);\n"
+    "        vec3 lv = lp.xyz - s.world_pos; float d = length(lv); vec3 l = lv / max(d, 1e-4);\n"
+    "        float range = lp.w;\n"
     "        float att = clamp(1.0 - pow(d / range, 4.0), 0.0, 1.0); att = att * att / (d * d + 1.0);\n"
-    "        if (u_light_color[i].w > 1.5) {\n"
-    "            float c = dot(-l, u_light_dir[i].xyz); float outer = u_light_dir[i].w;\n"
+    "        if (lc.w > 1.5) {\n"
+    "            vec4 ld = texelFetch(u_light_tex, base + ivec2(2, 0), 0);\n"
+    "            float c = dot(-l, ld.xyz); float outer = ld.w;\n"
     "            att *= smoothstep(outer, mix(outer, 1.0, 0.25), c);\n"
     "        }\n"
-    "        color += a3_brdf(s, l, u_light_color[i].rgb * att);\n"
+    "        color += a3_brdf(s, l, lc.rgb * att);\n"
     "    }\n"
     "    /* hemispheric ambient */\n"
     "    float up = s.normal.y * 0.5 + 0.5;\n"
     "    vec3 amb = mix(u_ground_color, u_sky_color, up) * u_ambient;\n"
     "    vec3 f0a = mix(vec3(0.04), s.albedo, s.metallic);\n"
     "    float ndv_a = max(dot(s.normal, s.view_dir), 1e-4);\n"
-    "    vec3 fa = f0a + (max(vec3(1.0 - s.roughness), f0a) - f0a) * pow(1.0 - ndv_a, 5.0);\n"
+    "    vec3 fa = f0a + (max(vec3(1.0 - s.roughness), f0a) - f0a) * pow(clamp(1.0 - ndv_a, 0.0, 1.0), 5.0);\n"
     "    vec3 refl = reflect(-s.view_dir, s.normal);\n"
-    "    vec3 env = mix(u_ground_color, u_sky_color, smoothstep(-0.2, 0.4, refl.y)) * u_ambient * 2.0;\n"
+    /* environment reflection: the sky gradient for smooth surfaces, blurred to the ambient term when rough */
+    "    vec3 sky_refl = refl.y >= 0.0 ? mix(u_sky_horizon, u_sky_color, pow(clamp(refl.y, 0.0, 1.0), 0.45)) : mix(u_sky_horizon, u_ground_color, clamp(-refl.y * 4.0, 0.0, 1.0));\n"
+    "    vec3 env = mix(sky_refl, mix(u_ground_color, u_sky_color, smoothstep(-0.2, 0.4, refl.y)) * u_ambient * 2.0, clamp(s.roughness * 1.6, 0.0, 1.0));\n"
     "    color += (amb * s.albedo * (1.0 - fa) * (1.0 - s.metallic) + env * fa * (1.0 - s.roughness * 0.6)) * s.occlusion;\n"
     "    color += s.emissive + s.albedo * v_params.z;\n"
-    "    /* fog */\n"
-    "    float dist = length(u_camera_pos - s.world_pos);\n"
-    "    float fog = 1.0 - exp(-u_fog_density * dist);\n"
-    "    color = mix(color, u_fog_color, clamp(fog, 0.0, 1.0));\n"
-    "    o_color = vec4(color, s.alpha);\n"
+    "    /* fog (done in the post pass for opaque surfaces) */\n"
+    "    if (u_fog_in_post == 0 || s.alpha < 0.999) {\n"
+    "        float dist = length(u_camera_pos - s.world_pos);\n"
+    "        float fog = 1.0 - exp(-u_fog_density * dist);\n"
+    "        color = mix(color, u_fog_color, clamp(fog, 0.0, 1.0));\n"
+    "    }\n"
+    "    if (any(isnan(color))) color = vec3(0.0);\n"
+    "    o_color = vec4(max(color, vec3(0.0)), s.alpha);\n"
+    "    o_normal = vec4(s.normal * 0.5 + 0.5, clamp(s.roughness, 0.0, 1.0));\n"
     "}\n";
 
 int a3_shader_surface_line_offset(void) {
@@ -221,11 +242,22 @@ const char *A3_SHADER_TONEMAP_FS =
     "in vec2 v_uv;\n"
     "out vec4 o_color;\n"
     "uniform sampler2D u_hdr;\n"
+    "uniform sampler2D u_bloom;\n"
+    "uniform float u_bloom_intensity;\n"
     "uniform float u_exposure;\n"
     "uniform float u_vignette;\n"
+    "uniform float u_saturation;\n"
+    "uniform float u_contrast;\n"
+    "uniform vec3 u_tint;\n"
     "vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }\n"
     "void main() {\n"
-    "    vec3 c = texture(u_hdr, v_uv).rgb * u_exposure;\n"
+    "    vec3 c = texture(u_hdr, v_uv).rgb + texture(u_bloom, v_uv).rgb * u_bloom_intensity;\n"
+    "    c *= u_exposure * u_tint;\n"
+    /* contrast around mid grey in log space, then saturation */
+    "    c = max(c, vec3(0.0));\n"
+    "    c = exp2((log2(c + 1e-5) - log2(0.18)) * u_contrast + log2(0.18));\n"
+    "    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
+    "    c = max(mix(vec3(l), c, u_saturation), vec3(0.0));\n"
     "    c = aces(c);\n"
     "    c = pow(c, vec3(1.0 / 2.2));\n"
     "    vec2 d = v_uv - 0.5;\n"
@@ -234,6 +266,173 @@ const char *A3_SHADER_TONEMAP_FS =
     "    float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) + fract(sin(dot(gl_FragCoord.xy, vec2(39.3468, 11.1353))) * 24634.6345) - 1.0;\n"
     "    c += n / 255.0;\n"
     "    o_color = vec4(c, dot(c, vec3(0.299, 0.587, 0.114)));\n" /* luma in alpha for FXAA */
+    "}\n";
+
+/* ---- screen-space post effects (depth + normal/roughness buffer) ---- */
+
+#define A3_POST_COMMON \
+    "in vec2 v_uv;\n" \
+    "out vec4 o_color;\n" \
+    "uniform sampler2D u_depth;\n" \
+    "uniform sampler2D u_normal;\n" \
+    "uniform mat4 u_proj;\n" \
+    "uniform mat4 u_inv_proj;\n" \
+    "uniform mat4 u_view;\n" \
+    "uniform int u_zo;\n" \
+    "vec3 view_pos(vec2 uv) {\n" \
+    "    float d = texture(u_depth, uv).r;\n" \
+    "    float z = u_zo != 0 ? d : d * 2.0 - 1.0;\n" \
+    "    vec4 p = u_inv_proj * vec4(uv * 2.0 - 1.0, z, 1.0);\n" \
+    "    return p.xyz / p.w;\n" \
+    "}\n" \
+    "vec2 to_uv(vec3 vp) { vec4 c = u_proj * vec4(vp, 1.0); return c.xy / c.w * 0.5 + 0.5; }\n"
+
+/* Screen-space ambient occlusion: 12 samples in a normal-oriented hemisphere. */
+const char *A3_SHADER_SSAO_FS =
+    A3_POST_COMMON
+    "uniform float u_radius;\n"
+    "void main() {\n"
+    "    float d = texture(u_depth, v_uv).r;\n"
+    "    if (d >= 1.0) { o_color = vec4(1.0); return; }\n"
+    "    vec3 p = view_pos(v_uv);\n"
+    "    vec3 n = normalize(mat3(u_view) * (texture(u_normal, v_uv).xyz * 2.0 - 1.0));\n"
+    "    float a = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;\n"
+    "    vec3 rnd = vec3(cos(a), sin(a), 0.0);\n"
+    "    vec3 t = normalize(rnd - n * dot(rnd, n));\n"
+    "    vec3 b = cross(n, t);\n"
+    "    float radius = u_radius * clamp(-p.z * 0.08, 0.35, 3.0);\n"
+    "    float occ = 0.0;\n"
+    "    for (int i = 0; i < 12; ++i) {\n"
+    "        float fi = float(i) + 0.5;\n"
+    "        float r = sqrt(fi / 12.0), phi = fi * 2.39996;\n"
+    "        vec3 k = vec3(r * cos(phi), r * sin(phi), sqrt(max(0.0, 1.0 - r * r)));\n"
+    "        float sc = mix(0.15, 1.0, (fi / 12.0) * (fi / 12.0));\n"
+    "        vec3 sp = p + (t * k.x + b * k.y + n * k.z) * radius * sc;\n"
+    "        vec2 suv = to_uv(sp);\n"
+    "        if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;\n"
+    "        float sz = view_pos(suv).z;\n"
+    "        float range = smoothstep(0.0, 1.0, radius / max(abs(p.z - sz), 1e-4));\n"
+    "        occ += (sz >= sp.z + 0.02 * radius ? 1.0 : 0.0) * range;\n"
+    "    }\n"
+    "    o_color = vec4(vec3(1.0 - occ / 12.0), 1.0);\n"
+    "}\n";
+
+const char *A3_SHADER_BLUR4_FS =
+    "in vec2 v_uv;\n"
+    "out vec4 o_color;\n"
+    "uniform sampler2D u_src;\n"
+    "uniform vec2 u_texel;\n"
+    "void main() {\n"
+    "    float s = 0.0;\n"
+    "    for (int y = -2; y < 2; ++y) for (int x = -2; x < 2; ++x) s += texture(u_src, v_uv + (vec2(x, y) + 0.5) * u_texel).r;\n"
+    "    o_color = vec4(vec3(s / 16.0), 1.0);\n"
+    "}\n";
+
+/* Composite: ambient occlusion, screen-space reflections, height fog with sun in-scattering. */
+const char *A3_SHADER_COMPOSITE_FS =
+    A3_POST_COMMON
+    "uniform sampler2D u_hdr;\n"
+    "uniform sampler2D u_ao;\n"
+    "uniform mat4 u_inv_view;\n"
+    "uniform vec3 u_camera_pos;\n"
+    "uniform float u_ao_strength;\n"
+    "uniform float u_ssr_strength;\n"
+    "uniform vec3 u_fog_color;\n"
+    "uniform float u_fog_density;\n"
+    "uniform float u_fog_falloff;\n"
+    "uniform vec3 u_sun_dir;\n"
+    "uniform vec3 u_sun_color;\n"
+    "void main() {\n"
+    "    vec3 col = texture(u_hdr, v_uv).rgb;\n"
+    "    float depth = texture(u_depth, v_uv).r;\n"
+    "    if (depth >= 1.0) { o_color = vec4(col, 1.0); return; }\n"
+    "    vec3 vp = view_pos(v_uv);\n"
+    "    vec3 wp = (u_inv_view * vec4(vp, 1.0)).xyz;\n"
+    "    vec4 nr = texture(u_normal, v_uv);\n"
+    "    vec3 nw = normalize(nr.xyz * 2.0 - 1.0);\n"
+    "    float rough = nr.w;\n"
+    "    col *= mix(1.0, texture(u_ao, v_uv).r, u_ao_strength);\n"
+    /* reflections: march the reflected ray against the depth buffer */
+    "    if (u_ssr_strength > 0.0 && rough < 0.55) {\n"
+    "        vec3 nv = normalize(mat3(u_view) * nw);\n"
+    "        vec3 vd = normalize(vp);\n"
+    "        vec3 r = normalize(reflect(vd, nv));\n"
+    "        float fres = 0.04 + 0.96 * pow(clamp(1.0 - dot(-vd, nv), 0.0, 1.0), 5.0);\n"
+    "        float stp = max(0.08, -vp.z * 0.02);\n"
+    "        vec3 pos = vp + nv * 0.03 * max(1.0, -vp.z * 0.05);\n"
+    "        for (int i = 0; i < 48; ++i) {\n"
+    "            vec3 prev = pos;\n"
+    "            pos += r * stp;\n"
+    "            stp *= 1.07;\n"
+    "            vec2 suv = to_uv(pos);\n"
+    "            if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0 || pos.z > -0.05) break;\n"
+    "            float sz = view_pos(suv).z;\n"
+    "            float diff = sz - pos.z;\n"
+    "            if (diff > 0.0 && diff < stp * 2.5 + 0.1) {\n"
+    "                vec3 a = prev, b = pos;\n"
+    "                for (int j = 0; j < 5; ++j) { vec3 m = (a + b) * 0.5; if (view_pos(to_uv(m)).z - m.z > 0.0) b = m; else a = m; }\n"
+    "                vec2 huv = to_uv(b);\n"
+    "                if (texture(u_depth, huv).r >= 1.0) break;\n"
+    "                vec2 edge = smoothstep(vec2(0.0), vec2(0.08), huv) * (1.0 - smoothstep(vec2(0.92), vec2(1.0), huv));\n"
+    "                float fade = edge.x * edge.y * (1.0 - float(i) / 48.0) * (1.0 - rough / 0.55);\n"
+    "                col = mix(col, texture(u_hdr, huv).rgb, clamp(fres * fade * u_ssr_strength, 0.0, 1.0));\n"
+    "                break;\n"
+    "            }\n"
+    "        }\n"
+    "    }\n"
+    /* exponential height fog, brighter toward the sun */
+    "    vec3 ray = wp - u_camera_pos;\n"
+    "    float dist = length(ray);\n"
+    "    float fog;\n"
+    "    if (u_fog_falloff > 1e-4) {\n"
+    "        float dy = ray.y * u_fog_falloff;\n"
+    "        float line = abs(dy) > 1e-4 ? (1.0 - exp(-dy)) / dy : 1.0;\n"
+    "        fog = 1.0 - exp(-u_fog_density * exp(-u_camera_pos.y * u_fog_falloff) * dist * line);\n"
+    "    } else fog = 1.0 - exp(-u_fog_density * dist);\n"
+    "    float sun = pow(max(dot(ray / max(dist, 1e-4), -u_sun_dir), 0.0), 8.0);\n"
+    "    vec3 fc = u_fog_color + u_sun_color * sun * 0.25;\n"
+    "    col = mix(col, fc, clamp(fog, 0.0, 1.0));\n"
+    "    o_color = vec4(col, 1.0);\n"
+    "}\n";
+
+/* Bloom: soft-threshold prefilter + 13-tap downsample; 9-tap tent upsample (added). */
+const char *A3_SHADER_BLOOM_DOWN_FS =
+    "in vec2 v_uv;\n"
+    "out vec4 o_color;\n"
+    "uniform sampler2D u_src;\n"
+    "uniform vec2 u_texel;\n"
+    "uniform float u_threshold;\n"
+    "uniform int u_prefilter;\n"
+    "vec3 s(vec2 o) { return texture(u_src, v_uv + o * u_texel).rgb; }\n"
+    "void main() {\n"
+    "    vec3 a = s(vec2(-2, -2)), b = s(vec2(0, -2)), c = s(vec2(2, -2));\n"
+    "    vec3 d = s(vec2(-1, -1)), e = s(vec2(1, -1));\n"
+    "    vec3 f = s(vec2(-2, 0)), g = s(vec2(0, 0)), h = s(vec2(2, 0));\n"
+    "    vec3 i = s(vec2(-1, 1)), j = s(vec2(1, 1));\n"
+    "    vec3 k = s(vec2(-2, 2)), l = s(vec2(0, 2)), m = s(vec2(2, 2));\n"
+    "    vec3 col = (d + e + i + j) * 0.125 + (a + b + f + g) * 0.03125 + (b + c + g + h) * 0.03125 + (f + g + k + l) * 0.03125 + (g + h + l + m) * 0.03125;\n"
+    "    if (u_prefilter != 0) {\n"
+    "        if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);\n"
+    "        col = min(col, vec3(24.0));\n"
+    "        float br = max(col.r, max(col.g, col.b));\n"
+    "        float knee = u_threshold * 0.5;\n"
+    "        float soft = clamp(br - u_threshold + knee, 0.0, 2.0 * knee);\n"
+    "        soft = soft * soft / (4.0 * knee + 1e-4);\n"
+    "        col *= max(soft, br - u_threshold) / max(br, 1e-4);\n"
+    "    }\n"
+    "    o_color = vec4(col, 1.0);\n"
+    "}\n";
+
+const char *A3_SHADER_BLOOM_UP_FS =
+    "in vec2 v_uv;\n"
+    "out vec4 o_color;\n"
+    "uniform sampler2D u_src;\n"
+    "uniform vec2 u_texel;\n"
+    "vec3 s(vec2 o) { return texture(u_src, v_uv + o * u_texel).rgb; }\n"
+    "void main() {\n"
+    "    vec3 col = s(vec2(0, 0)) * 4.0 + (s(vec2(-1, 0)) + s(vec2(1, 0)) + s(vec2(0, -1)) + s(vec2(0, 1))) * 2.0\n"
+    "             + s(vec2(-1, -1)) + s(vec2(1, -1)) + s(vec2(-1, 1)) + s(vec2(1, 1));\n"
+    "    o_color = vec4(col / 16.0, 1.0);\n"
     "}\n";
 
 /* FXAA (quality-lite): edge-directed blur using luma stored in alpha. */

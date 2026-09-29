@@ -25,6 +25,7 @@
 #include "../../engine/modeling/a3_emesh_ops.h"
 #include "../../engine/modeling/a3_modeling_kernels.h"
 #include "../../engine/resource/a3_assets.h"
+#include "../../engine/world/a3_citygen.h"
 #include "../../engine/core/a3_log.h"
 #include "../../engine/core/a3_string.h"
 #include "../../engine/core/a3_format.h"
@@ -1222,6 +1223,76 @@ static b32 c_screenshot(const Args *a) { return run_game(a, 1); }
 /* Commands: modeling                                                       */
 /* ======================================================================== */
 
+/* ======================================================================== */
+/* Commands: world generation                                               */
+/* ======================================================================== */
+
+static b32 c_world_city(const Args *a) {
+    const char *dir = arg(a, 0);
+    if (!need_project(dir)) return 0;
+    A3CityDesc d;
+    a3_city_desc_default(&d);
+    d.seed = (u64)strtoull(opt(a, "seed", "1"), 0, 10);
+    d.density = (f32)atof(opt(a, "density", "1"));
+    if (d.density < 0.1f || d.density > 1.0f) return fail("Use a density between 0.1 and 1.", "bad density '%s'", opt(a, "density", ""));
+    const char *time = opt(a, "time", "night");
+    if (a3_streq(time, "day")) d.time = A3_CITY_DAY;
+    else if (a3_streq(time, "sunset")) d.time = A3_CITY_SUNSET;
+    else if (a3_streq(time, "night")) d.time = A3_CITY_NIGHT;
+    else return fail("Use --time day, sunset or night.", "unknown time '%s'", time);
+    if (has_opt(a, "no-lights")) d.street_lights = 0;
+    if (has_opt(a, "no-neon")) d.neon = 0;
+    const char *scene_rel = opt(a, "scene", "Assets/Scenes/City.a3scene");
+    char scene_path[PATHCAP], roads_path[PATHCAP], folder[PATHCAP];
+    a3_path_join(scene_path, sizeof(scene_path), dir, scene_rel);
+    a3_path_join(roads_path, sizeof(roads_path), dir, "Assets/City/roads.json");
+    if (a3_file_exists(scene_path) && !has_opt(a, "all")) return fail("Pass --all to overwrite it, or choose another --scene.", "%s already exists", scene_rel);
+
+    A3World *w = a3_world_create("Sol Harbor");
+    A3StrBuf roads;
+    a3_strbuf_init(&roads, A3_MEM_TEMP);
+    A3CityStats st;
+    b32 ok = a3_city_generate(w, &d, &st, &roads);
+    if (!ok) { a3_strbuf_free(&roads); a3_world_destroy(w); return fail(0, "city generation failed"); }
+    if (!has_opt(a, "dry-run")) {
+        a3_path_dirname(scene_path, folder, sizeof(folder));
+        a3_dir_create(folder);
+        a3_path_dirname(roads_path, folder, sizeof(folder));
+        a3_dir_create(folder);
+        if (a3_file_write_atomic(roads_path, a3_strbuf_cstr(&roads), roads.len) != A3_OK) ok = fail("Check that the project folder is writable.", "cannot write %s", roads_path);
+    }
+    if (ok) ok = save_scene(w, scene_path, a);
+    if (ok && has_opt(a, "startup") && !has_opt(a, "dry-run")) {
+        A3ProjectInfo info;
+        if (a3_project_read(dir, &info)) {
+            a3_strcpy(info.startup_scene, sizeof(info.startup_scene), scene_rel);
+            a3_project_write(dir, &info);
+        }
+    }
+    a3_jw_kv_string(R(), "scene", scene_rel);
+    a3_jw_kv_string(R(), "roads", "Assets/City/roads.json");
+    a3_jw_kv_string(R(), "time", time);
+    a3_jw_kv_int(R(), "objects", a3_world_entity_count(w));
+    a3_jw_key(R(), "stats");
+    a3_jw_begin_object(R());
+    a3_jw_kv_int(R(), "buildings", st.buildings);
+    a3_jw_kv_int(R(), "towers", st.towers);
+    a3_jw_kv_int(R(), "hotels", st.hotels);
+    a3_jw_kv_int(R(), "road_pieces", st.roads);
+    a3_jw_kv_int(R(), "lights", st.lights);
+    a3_jw_kv_int(R(), "palms", st.palms);
+    a3_jw_kv_int(R(), "props", st.props);
+    a3_jw_kv_int(R(), "road_nodes", st.road_nodes);
+    a3_jw_kv_int(R(), "road_edges", st.road_edges);
+    f32 ext[4] = { st.min_x, st.max_x, st.min_z, st.max_z };
+    a3_jw_key(R(), "extent_xxzz");
+    a3_jw_floats(R(), ext, 4);
+    a3_jw_end_object(R());
+    a3_strbuf_free(&roads);
+    a3_world_destroy(w);
+    return ok;
+}
+
 static b32 c_mesh_new(const Args *a);
 static b32 c_mesh_info(const Args *a);
 static b32 c_mesh_edit(const Args *a);
@@ -1256,6 +1327,7 @@ static const Cmd g_cmds[] = {
     { "script", "eval", c_script_eval, "script eval <expression>", "Evaluates one A3Script expression, e.g. \"lerp(0, 10, 0.25)\"." },
     { "simulate", 0, c_simulate, "simulate <project> [--scene S] [--frames 120] [--dt 0.0166] [--keys space@10-20,w@0-60] [--watch A,B] [--trace N]", "Plays the game headless (no window) and reports object states, script errors and HUD text." },
     { "screenshot", 0, c_screenshot, "screenshot <project> [--scene S] [--frames 30] [--size 1280x720] [--camera x,y,z --look x,y,z] [--out file.png]", "Plays for some frames in a hidden window and saves an image (needs OpenGL)." },
+    { "world", "city", c_world_city, "world city <project> [--scene Assets/Scenes/City.a3scene] [--seed 1] [--time day|sunset|night] [--density 1] [--no-lights] [--no-neon] [--startup] [--all]", "Generates Sol Harbor, a coastal city (towers, Art Deco beachfront, causeways, port) plus its road graph in Assets/City/roads.json." },
     { "mesh", "new", c_mesh_new, "mesh new <cube|plane|grid|cylinder|sphere|cone|torus> --out file.obj [--size 1] [--segments 16] [--rings 8] [--smooth]", "Creates a model with the modeling kernels." },
     { "mesh", "info", c_mesh_info, "mesh info <file.obj>", "Vertex, edge, face counts, bounds and whether the mesh is closed." },
     { "mesh", "edit", c_mesh_edit, "mesh edit <in.obj> --out <out.obj> --op <operation> [op options]...", "Applies modeling operations in order (see 'mesh ops')." },

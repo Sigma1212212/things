@@ -111,6 +111,15 @@ void a3_register_core_components(void) {
     wd.time_of_day = 14.0f;
     wd.gravity = a3_v3(0, -9.81f, 0);
     wd.day_length_minutes = 20.0f;
+    wd.bloom_intensity = 0.35f;
+    wd.bloom_threshold = 1.2f;
+    wd.fog_height_falloff = 0.0f;
+    wd.ao_strength = 0.7f;
+    wd.reflection_strength = 1.0f;
+    wd.exposure = 1.0f;
+    wd.saturation = 1.0f;
+    wd.contrast = 1.0f;
+    wd.tint = a3_v4(1, 1, 1, 1);
     t = a3_component_register("WorldSettings", "World", sizeof(A3CWorldSettings), 16, &wd, A3_COMP_BUILTIN | A3_COMP_UNIQUE,
         "Sky, ambient light, fog, gravity and time of day for the whole scene.");
     A3_T_WORLD_SETTINGS = t;
@@ -126,6 +135,15 @@ void a3_register_core_components(void) {
     A3_REFLECT_FIELD(t, A3CWorldSettings, day_night_cycle, A3_FIELD_BOOL, "Day/Night Cycle", "Advance the time of day automatically while playing.");
     a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, day_length_minutes, A3_FIELD_F32, "Day Length (min)", "Real minutes for a full day."), 0.1f, 1440, 0.5f);
     A3_REFLECT_FIELD(t, A3CWorldSettings, gravity, A3_FIELD_VEC3, "Gravity", "Acceleration applied to physics objects, m/s^2.")->flags |= A3_FIELD_FLAG_ADVANCED;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, bloom_intensity, A3_FIELD_F32, "Bloom", "Glow around bright lights, neon and the sun."), 0, 4, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, bloom_threshold, A3_FIELD_F32, "Bloom Threshold", "How bright something must be to glow."), 0, 10, 0.05f)->flags |= A3_FIELD_FLAG_ADVANCED;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, fog_height_falloff, A3_FIELD_F32, "Fog Height Falloff", "0 = even fog. Higher values keep fog low, near the ground and water."), 0, 1, 0.005f)->flags |= A3_FIELD_FLAG_ADVANCED;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, ao_strength, A3_FIELD_F32, "Contact Shadows (AO)", "Darkens creases and corners (screen-space ambient occlusion)."), 0, 1, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, reflection_strength, A3_FIELD_F32, "Reflections", "Screen-space reflections on smooth surfaces (water, wet roads, cars, glass)."), 0, 1, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, exposure, A3_FIELD_F32, "Exposure", "Overall brightness of the image."), 0.05f, 8, 0.01f);
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, saturation, A3_FIELD_F32, "Saturation", "Color intensity. 1 = unchanged."), 0, 2, 0.01f)->flags |= A3_FIELD_FLAG_ADVANCED;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, contrast, A3_FIELD_F32, "Contrast", "1 = unchanged."), 0.5f, 2, 0.01f)->flags |= A3_FIELD_FLAG_ADVANCED;
+    A3_REFLECT_FIELD(t, A3CWorldSettings, tint, A3_FIELD_COLOR, "Color Grade", "Tints the final image (warm or cool looks).")->flags |= A3_FIELD_FLAG_ADVANCED;
 }
 
 /* ---- Transform system ---- */

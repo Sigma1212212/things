@@ -23,7 +23,7 @@ typedef struct GlTexture { GLuint name; i32 w, h; A3TexFormat format; b32 mipmap
 typedef struct UniformSlot { u64 hash; GLint loc; } UniformSlot;
 typedef struct GlShader { GLuint program; b32 used; UniformSlot cache[UNIFORM_CACHE]; char name[48]; } GlShader;
 typedef struct GlMesh { GLuint vao; b32 index32; b32 has_indices; b32 used; } GlMesh;
-typedef struct GlTarget { GLuint fbo; b32 used; } GlTarget;
+typedef struct GlTarget { GLuint fbo; b32 used; u32 color_count; } GlTarget;
 
 static struct {
     b32 ready;
@@ -568,6 +568,47 @@ A3RhiTarget a3_rhi_target_create(A3RhiTexture color, A3RhiTexture depth) {
     t->used = 1;
     h.id = slot;
     return h;
+}
+
+A3RhiTarget a3_rhi_target_create_mrt(const A3RhiTexture *colors, u32 count, A3RhiTexture depth) {
+    A3RhiTarget h = { 0 };
+    if (count > 4) count = 4;
+    u32 slot;
+    FIND_FREE(targets, MAX_TARGETS, slot);
+    if (!slot) { A3_ERROR("render", "too many render targets"); return h; }
+    GlTarget *t = &g_gl.targets[slot - 1];
+    glGenFramebuffers(1, &t->fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, t->fbo);
+    GLenum dbs[4];
+    for (u32 i = 0; i < count; ++i) {
+        if (HANDLE_OK(textures, colors[i], MAX_TEXTURES))
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, g_gl.textures[colors[i].id - 1].name, 0);
+        dbs[i] = GL_COLOR_ATTACHMENT0 + i;
+    }
+    glDrawBuffers((GLsizei)count, dbs);
+    if (HANDLE_OK(textures, depth, MAX_TEXTURES))
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, g_gl.textures[depth.id - 1].name, 0);
+    GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (st != GL_FRAMEBUFFER_COMPLETE) {
+        A3_ERROR("render", "framebuffer incomplete (0x%x)", st);
+        glDeleteFramebuffers(1, &t->fbo);
+        return h;
+    }
+    t->used = 1;
+    t->color_count = count;
+    h.id = slot;
+    return h;
+}
+
+/* Limits drawing to the first `count` color attachments of the bound target
+ * (transparent objects, particles and lines only write the color buffer). */
+void a3_rhi_set_draw_buffers(u32 count) {
+    GLint fbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+    if (!fbo) return;
+    GLenum dbs[4] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT0 + 1, GL_COLOR_ATTACHMENT0 + 2, GL_COLOR_ATTACHMENT0 + 3 };
+    glDrawBuffers((GLsizei)(count > 4 ? 4 : count), dbs);
 }
 
 void a3_rhi_target_destroy(A3RhiTarget h) {

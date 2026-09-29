@@ -43,6 +43,7 @@ file(GLOB A3_SHARED_SOURCES CONFIGURE_DEPENDS
   engine/anim/*.c
   engine/script/*.c
   engine/modeling/*.c
+  engine/world/*.c
   engine/resource/*.c
   engine/ui/*.c
 )
@@ -52,6 +53,7 @@ list(APPEND A3_SHARED_SOURCES
   ${CMAKE_SOURCE_DIR}/engine/render/a3_renderer.c
   ${CMAKE_SOURCE_DIR}/engine/render/a3_shaders.c
   ${CMAKE_SOURCE_DIR}/engine/render/a3_shader_graph.c
+  ${CMAKE_SOURCE_DIR}/engine/render/a3_builtin_materials.c
 )
 set(A3_ENGINE_SOURCES
   ${A3_CORE_SOURCES}

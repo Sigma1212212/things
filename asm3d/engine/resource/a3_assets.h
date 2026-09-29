@@ -55,6 +55,12 @@ u32 a3_assets_mesh_primitive(A3Primitive p);
 u32 a3_assets_mesh(const char *path);
 /* Registers a procedurally generated mesh under a unique name (takes ownership of data). */
 u32 a3_assets_mesh_from_data(const char *name, A3MeshData *data);
+/* Procedural meshes: a "builtin:<name>" path not matching a primitive is built
+ * by the generator registered under that path (first use), e.g. the city's
+ * "builtin:palm_crown". Generators fill `out` and return 1 on success. */
+typedef b32 (*A3MeshGenerator)(A3MeshData *out);
+b32 a3_assets_register_mesh_generator(const char *path, A3MeshGenerator fn);
+b32 a3_assets_has_mesh_generator(const char *path);
 const A3MeshAsset *a3_assets_mesh_get(u32 id);
 u32 a3_assets_mesh_count(void);
 

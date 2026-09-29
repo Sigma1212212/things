@@ -160,6 +160,8 @@ void a3_rhi_shader_bind_block(A3RhiShader s, const char *block_name, u32 slot);
 
 /* ---- Render targets ---- */
 A3RhiTarget a3_rhi_target_create(A3RhiTexture color, A3RhiTexture depth);
+A3RhiTarget a3_rhi_target_create_mrt(const A3RhiTexture *colors, u32 count, A3RhiTexture depth); /* up to 4 color attachments */
+void a3_rhi_set_draw_buffers(u32 count);   /* write only the first `count` attachments of the bound target */
 void a3_rhi_target_destroy(A3RhiTarget t);
 /* Binds a target (id 0 = window backbuffer) and sets the viewport. */
 void a3_rhi_target_bind(A3RhiTarget t, i32 width, i32 height);

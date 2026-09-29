@@ -50,6 +50,8 @@ void a3_rhi_bind_texture(u32 slot, A3RhiTexture t) { A3_UNUSED(slot); A3_UNUSED(
 void a3_rhi_bind_uniform_buffer(u32 slot, A3RhiBuffer b) { A3_UNUSED(slot); A3_UNUSED(b); }
 void a3_rhi_shader_bind_block(A3RhiShader s, const char *b, u32 slot) { A3_UNUSED(s); A3_UNUSED(b); A3_UNUSED(slot); }
 A3RhiTarget a3_rhi_target_create(A3RhiTexture c, A3RhiTexture d) { A3_UNUSED(c); A3_UNUSED(d); A3RhiTarget t = { 0 }; return t; }
+A3RhiTarget a3_rhi_target_create_mrt(const A3RhiTexture *c, u32 n, A3RhiTexture d) { A3_UNUSED(c); A3_UNUSED(n); A3_UNUSED(d); A3RhiTarget t = { 0 }; return t; }
+void a3_rhi_set_draw_buffers(u32 n) { A3_UNUSED(n); }
 void a3_rhi_target_destroy(A3RhiTarget t) { A3_UNUSED(t); }
 void a3_rhi_target_bind(A3RhiTarget t, i32 w, i32 h) { A3_UNUSED(t); A3_UNUSED(w); A3_UNUSED(h); }
 void a3_rhi_clear(b32 c, A3Vec4 rgba, b32 d, f32 dv) { A3_UNUSED(c); A3_UNUSED(rgba); A3_UNUSED(d); A3_UNUSED(dv); }

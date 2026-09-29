@@ -4,6 +4,7 @@
  * this build. Exporters generate a trimmed version of this list when a game
  * does not use a module (build-time stripping).
  */
+#include "../world/a3_procmeshes.h"
 #include "a3_engine.h"
 #include "../physics/a3_physics.h"
 #include "../physics/a3_character.h"
@@ -124,6 +125,7 @@ static void sys_audio(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_au
 static void sys_audio_stop(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_audio_stop_world(ctx->world); }
 
 void a3_modules_register_all(void) {
+    a3_procmeshes_register();
     a3_physics_register();
     a3_audio_register();
     a3_particles_register();

@@ -82,6 +82,16 @@ typedef struct A3CWorldSettings {
     b32 day_night_cycle;
     A3Vec3 gravity;
     f32 day_length_minutes;
+    /* post processing / look (see a3_renderer.c) */
+    f32 bloom_intensity;
+    f32 bloom_threshold;
+    f32 fog_height_falloff;   /* 0 = even fog; > 0 = thicker near the ground */
+    f32 ao_strength;          /* screen-space ambient occlusion */
+    f32 reflection_strength;  /* screen-space reflections on smooth surfaces */
+    f32 exposure;
+    f32 saturation;
+    f32 contrast;
+    A3Vec4 tint;              /* color grade multiplier */
 } A3CWorldSettings;
 
 void a3_register_core_components(void);

@@ -18,12 +18,15 @@
 #include "../platform/a3_platform.h"
 
 #define MAX_MATERIALS 256
-#define MAX_LIGHTS 16
+#define MAX_OBJECT_LIGHTS 8      /* lights per object (instance data) */
+#define LIGHT_CAP 1024           /* lights per frame (light texture: 256 per row, 3 texels each) */
+#define BLOOM_MIPS 5
 
 typedef struct InstanceData {
     A3Mat4 model;
     A3Vec4 color;
     A3Vec4 params;  /* metallic, roughness, emissive, receive_shadows */
+    A3Vec4 lights0, lights1; /* indices into the light texture, -1 = none */
 } InstanceData;
 
 typedef struct DebugVertex { A3Vec3 pos; u32 color; } DebugVertex;
@@ -39,8 +42,11 @@ typedef struct Material {
 typedef struct TargetSet {
     i32 w, h;
     u64 last_used;
-    A3RhiTexture hdr_color, hdr_depth, ldr_color;
-    A3RhiTarget hdr_target, ldr_target;
+    A3RhiTexture hdr_color, hdr_depth, ldr_color, normal, post, ao, ao_blur;
+    A3RhiTarget hdr_target, ldr_target, post_target, ao_target, ao_blur_target;
+    A3RhiTexture bloom[BLOOM_MIPS];
+    A3RhiTarget bloom_target[BLOOM_MIPS];
+    i32 bloom_w[BLOOM_MIPS], bloom_h[BLOOM_MIPS];
 } TargetSet;
 
 typedef struct Batch {
@@ -63,6 +69,10 @@ struct A3Renderer {
     A3RenderSettings settings;
     A3RenderFrameInfo info;
     A3RhiShader lit, shadow, sky, tonemap, fxaa, lines, grid, particle;
+    A3RhiShader ssao, blur4, composite, bloom_down, bloom_up;
+    /* lights of the frame (texture) */
+    A3RhiTexture light_tex;
+    A3Vec4 light_texels[LIGHT_CAP * 3];
     /* particles */
     A3RhiBuffer particle_quad_vb, particle_quad_ib, particle_buf;
     usize particle_buf_size;
@@ -74,6 +84,7 @@ struct A3Renderer {
     i32 rt_w, rt_h;
     A3RhiTexture hdr_color, hdr_depth, ldr_color;
     A3RhiTarget hdr_target, ldr_target;   /* current set (one of target_sets) */
+    TargetSet *cur;
     TargetSet target_sets[3];
     u64 target_clock;
     /* material assets by path (.a3shader files) */
@@ -122,6 +133,7 @@ static A3RhiShader make_lit_shader(const char *surface, const char *name, A3Shad
         a3_rhi_set_int(s, "u_shadow_map", 1);
         a3_rhi_set_int(s, "u_tex1", 2);
         a3_rhi_set_int(s, "u_tex2", 3);
+        a3_rhi_set_int(s, "u_light_tex", 4);
     }
     return s;
 }
@@ -135,7 +147,10 @@ A3Renderer *a3_renderer_create(void) {
     r->settings.fxaa = 1;
     r->settings.vignette = 0.25f;
     r->settings.frustum_culling = 1;
-    r->settings.max_lights = MAX_LIGHTS;
+    r->settings.max_lights = MAX_OBJECT_LIGHTS;
+    r->settings.ssao = 1;
+    r->settings.ssr = 1;
+    r->settings.bloom = 1;
     r->debug_depth = 1;
     A3ShaderCompileResult res;
     r->lit = make_lit_shader(A3_SHADER_DEFAULT_SURFACE, "lit", &res);
@@ -147,13 +162,31 @@ A3Renderer *a3_renderer_create(void) {
     r->lines = make_shader(A3_SHADER_LINES_VS, A3_SHADER_LINES_FS, "lines");
     r->grid = make_shader(A3_SHADER_GRID_VS, A3_SHADER_GRID_FS, "grid");
     r->particle = make_shader(A3_SHADER_PARTICLE_VS, A3_SHADER_PARTICLE_FS, "particle");
+    r->ssao = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_SSAO_FS, "ssao");
+    r->blur4 = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_BLUR4_FS, "blur4");
+    r->composite = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_COMPOSITE_FS, "composite");
+    r->bloom_down = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_BLOOM_DOWN_FS, "bloom_down");
+    r->bloom_up = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_BLOOM_UP_FS, "bloom_up");
+    {
+        A3TextureDesc ld;
+        a3_zero_struct(&ld);
+        ld.width = 256 * 3;
+        ld.height = LIGHT_CAP / 256;
+        ld.format = A3_TEX_RGBA32F;
+        ld.filter = A3_FILTER_NEAREST;
+        ld.wrap = A3_WRAP_CLAMP;
+        ld.debug_name = "lights";
+        r->light_tex = a3_rhi_texture_create(&ld);
+    }
     r->instance_buf = a3_rhi_buffer_create(A3_BUFFER_VERTEX, sizeof(InstanceData) * 1024, 0, 1);
     A3VertexLayout *il = &r->instance_layout;
     il->stride = sizeof(InstanceData);
     for (u32 i = 0; i < 4; ++i) il->attribs[i] = (A3VertexAttrib){ 4 + i, 4, A3_ATTR_FLOAT, i * 16, 1 };
     il->attribs[4] = (A3VertexAttrib){ 8, 4, A3_ATTR_FLOAT, (u32)A3_OFFSETOF(InstanceData, color), 1 };
     il->attribs[5] = (A3VertexAttrib){ 9, 4, A3_ATTR_FLOAT, (u32)A3_OFFSETOF(InstanceData, params), 1 };
-    il->count = 6;
+    il->attribs[6] = (A3VertexAttrib){ 10, 4, A3_ATTR_FLOAT, (u32)A3_OFFSETOF(InstanceData, lights0), 1 };
+    il->attribs[7] = (A3VertexAttrib){ 11, 4, A3_ATTR_FLOAT, (u32)A3_OFFSETOF(InstanceData, lights1), 1 };
+    il->count = 8;
     /* debug lines */
     r->debug_buf = a3_rhi_buffer_create(A3_BUFFER_VERTEX, sizeof(DebugVertex) * 4096, 0, 1);
     A3VertexLayout dl;
@@ -201,11 +234,14 @@ A3Renderer *a3_renderer_create(void) {
 static u32 material_from_path(A3Renderer *r, const char *path);
 
 static void destroy_target_set(TargetSet *t) {
-    if (t->hdr_target.id) a3_rhi_target_destroy(t->hdr_target);
-    if (t->ldr_target.id) a3_rhi_target_destroy(t->ldr_target);
-    if (t->hdr_color.id) a3_rhi_texture_destroy(t->hdr_color);
-    if (t->hdr_depth.id) a3_rhi_texture_destroy(t->hdr_depth);
-    if (t->ldr_color.id) a3_rhi_texture_destroy(t->ldr_color);
+    A3RhiTarget targets[] = { t->hdr_target, t->ldr_target, t->post_target, t->ao_target, t->ao_blur_target };
+    for (u32 i = 0; i < A3_ARRAY_COUNT(targets); ++i) if (targets[i].id) a3_rhi_target_destroy(targets[i]);
+    A3RhiTexture texs[] = { t->hdr_color, t->hdr_depth, t->ldr_color, t->normal, t->post, t->ao, t->ao_blur };
+    for (u32 i = 0; i < A3_ARRAY_COUNT(texs); ++i) if (texs[i].id) a3_rhi_texture_destroy(texs[i]);
+    for (u32 i = 0; i < BLOOM_MIPS; ++i) {
+        if (t->bloom_target[i].id) a3_rhi_target_destroy(t->bloom_target[i]);
+        if (t->bloom[i].id) a3_rhi_texture_destroy(t->bloom[i]);
+    }
     a3_zero_struct(t);
 }
 
@@ -220,7 +256,9 @@ void a3_renderer_destroy(A3Renderer *r) {
     destroy_targets(r);
     if (r->shadow_target.id) a3_rhi_target_destroy(r->shadow_target);
     if (r->shadow_tex.id) a3_rhi_texture_destroy(r->shadow_tex);
-    A3RhiShader shaders[] = { r->lit, r->shadow, r->sky, r->tonemap, r->fxaa, r->lines, r->grid, r->particle };
+    A3RhiShader shaders[] = { r->lit, r->shadow, r->sky, r->tonemap, r->fxaa, r->lines, r->grid, r->particle,
+                              r->ssao, r->blur4, r->composite, r->bloom_down, r->bloom_up };
+    if (r->light_tex.id) a3_rhi_texture_destroy(r->light_tex);
     for (u32 i = 0; i < A3_ARRAY_COUNT(shaders); ++i) a3_rhi_shader_destroy(shaders[i]);
     for (u32 i = 0; i < MAX_MATERIALS; ++i) if (r->materials[i].used) a3_rhi_shader_destroy(r->materials[i].shader);
     a3_rhi_mesh_destroy(r->debug_mesh);
@@ -264,9 +302,32 @@ static b32 ensure_targets(A3Renderer *r, i32 w, i32 h) {
         use->hdr_depth = a3_rhi_texture_create(&d);
         d.format = A3_TEX_RGBA8; d.debug_name = "ldr_color";
         use->ldr_color = a3_rhi_texture_create(&d);
-        use->hdr_target = a3_rhi_target_create(use->hdr_color, use->hdr_depth);
+        d.format = A3_TEX_RGBA16F; d.debug_name = "normal_roughness";
+        use->normal = a3_rhi_texture_create(&d);
+        d.debug_name = "post";
+        use->post = a3_rhi_texture_create(&d);
+        d.format = A3_TEX_R8; d.debug_name = "ao";
+        use->ao = a3_rhi_texture_create(&d);
+        d.debug_name = "ao_blur";
+        use->ao_blur = a3_rhi_texture_create(&d);
+        A3RhiTexture mrt[2] = { use->hdr_color, use->normal };
+        use->hdr_target = a3_rhi_target_create_mrt(mrt, 2, use->hdr_depth);
         use->ldr_target = a3_rhi_target_create(use->ldr_color, (A3RhiTexture){ 0 });
-        if (!use->hdr_target.id || !use->ldr_target.id) { destroy_target_set(use); return 0; }
+        use->post_target = a3_rhi_target_create(use->post, (A3RhiTexture){ 0 });
+        use->ao_target = a3_rhi_target_create(use->ao, (A3RhiTexture){ 0 });
+        use->ao_blur_target = a3_rhi_target_create(use->ao_blur, (A3RhiTexture){ 0 });
+        i32 bw = w, bh = h;
+        for (u32 i = 0; i < BLOOM_MIPS; ++i) {
+            bw = a3_maxi(bw / 2, 1);
+            bh = a3_maxi(bh / 2, 1);
+            A3TextureDesc bd = d;
+            bd.width = bw; bd.height = bh; bd.format = A3_TEX_RGBA16F; bd.debug_name = "bloom";
+            use->bloom[i] = a3_rhi_texture_create(&bd);
+            use->bloom_target[i] = a3_rhi_target_create(use->bloom[i], (A3RhiTexture){ 0 });
+            use->bloom_w[i] = bw;
+            use->bloom_h[i] = bh;
+        }
+        if (!use->hdr_target.id || !use->ldr_target.id || !use->post_target.id) { destroy_target_set(use); return 0; }
         use->w = w;
         use->h = h;
     }
@@ -276,6 +337,7 @@ static b32 ensure_targets(A3Renderer *r, i32 w, i32 h) {
     r->ldr_color = use->ldr_color;
     r->hdr_target = use->hdr_target;
     r->ldr_target = use->ldr_target;
+    r->cur = use;
     r->rt_w = w;
     r->rt_h = h;
     return 1;
@@ -353,19 +415,24 @@ typedef struct LightSet {
     b32 has_sun;
     A3Vec3 sun_dir, sun_color;
     b32 sun_shadows;
-    u32 count;
-    A3Vec4 pos[MAX_LIGHTS], color[MAX_LIGHTS], dir[MAX_LIGHTS];
-    f32 dist[MAX_LIGHTS];
+    u32 count;                 /* local lights in the light texture */
+    A3Vec4 *pos;               /* xyz, range (points into scratch) */
+    f32 *strength;             /* brightness for choosing the most important lights per object */
 } LightSet;
 
-static void gather_lights(A3Renderer *r, A3World *w, A3Vec3 cam, LightSet *ls) {
+/* Collects the sun and up to LIGHT_CAP local lights (nearest to the camera first) into the light texture. */
+static void gather_lights(A3Renderer *r, A3World *w, A3Vec3 cam, LightSet *ls, A3Arena *scratch) {
     a3_zero_struct(ls);
+    u32 total = a3_component_count(w, A3_T_LIGHT);
+    typedef struct Cand { A3Vec4 pos, color, dir; f32 dist, strength; } Cand;
+    Cand *c = total ? A3_ARENA_PUSH_ARRAY(scratch, Cand, total) : 0;
+    u32 n = 0;
     u32 types[2] = { A3_T_LIGHT, A3_T_TRANSFORM };
     A3Query q = a3_query_begin(w, types, 2);
-    u32 max_lights = (u32)A3_CLAMP(r->settings.max_lights, 0, MAX_LIGHTS);
     while (a3_query_next(&q)) {
         const A3CLight *l = (const A3CLight *)q.components[0];
         const A3CTransform *t = (const A3CTransform *)q.components[1];
+        if (!a3_entity_active(w, q.entity)) continue;
         A3Vec3 color = a3_v3_scale(a3_color3_to_linear(l->color), l->intensity);
         A3Vec3 pos = a3_mat4_get_translation(&t->world);
         A3Vec3 fwd = a3_v3_norm(a3_mat4_mul_dir(&t->world, a3_v3(0, 0, -1)));
@@ -378,26 +445,67 @@ static void gather_lights(A3Renderer *r, A3World *w, A3Vec3 cam, LightSet *ls) {
             }
             continue;
         }
-        f32 d = a3_v3_dist(pos, cam) - l->range;
-        u32 slot = ls->count;
-        if (ls->count >= max_lights) {
-            /* replace the farthest light if this one is closer */
-            u32 far_i = 0;
-            for (u32 i = 1; i < ls->count; ++i) if (ls->dist[i] > ls->dist[far_i]) far_i = i;
-            if (max_lights == 0 || d >= ls->dist[far_i]) continue;
-            slot = far_i;
-        } else {
-            ls->count++;
-        }
-        ls->dist[slot] = d;
-        ls->pos[slot] = a3_v4(pos.x, pos.y, pos.z, a3_maxf(l->range, 0.01f));
-        ls->color[slot] = a3_v4(color.x * 10.0f, color.y * 10.0f, color.z * 10.0f, l->type == A3_LIGHT_SPOT ? 2.0f : 1.0f);
-        ls->dir[slot] = a3_v4(fwd.x, fwd.y, fwd.z, a3_cosf(a3_clampf(l->spot_angle, 1, 179) * 0.5f * A3_DEG2RAD));
+        if (!c || l->intensity <= 0) continue;
+        Cand *k = &c[n++];
+        k->pos = a3_v4(pos.x, pos.y, pos.z, a3_maxf(l->range, 0.01f));
+        k->color = a3_v4(color.x * 10.0f, color.y * 10.0f, color.z * 10.0f, l->type == A3_LIGHT_SPOT ? 2.0f : 1.0f);
+        k->dir = a3_v4(fwd.x, fwd.y, fwd.z, a3_cosf(a3_clampf(l->spot_angle, 1, 179) * 0.5f * A3_DEG2RAD));
+        k->dist = a3_maxf(a3_v3_dist(pos, cam) - l->range, 0.0f);
+        k->strength = (color.x + color.y + color.z) * l->range;
     }
     if (!ls->has_sun) {
         ls->sun_dir = a3_v3_norm(a3_v3(-0.4f, -1.0f, -0.3f));
         ls->sun_color = a3_v3_zero();
     }
+    /* keep the nearest LIGHT_CAP */
+    if (n > LIGHT_CAP) {
+        A3SortPair *sp = A3_ARENA_PUSH_ARRAY(scratch, A3SortPair, n * 2);
+        for (u32 i = 0; i < n; ++i) { sp[i].key = (u64)(c[i].dist * 16.0f); sp[i].value = i; }
+        a3_radix_sort_pairs(sp, sp + n, n);
+        Cand *sorted = A3_ARENA_PUSH_ARRAY(scratch, Cand, LIGHT_CAP);
+        for (u32 i = 0; i < LIGHT_CAP; ++i) sorted[i] = c[sp[i].value];
+        c = sorted;
+        n = LIGHT_CAP;
+    }
+    ls->count = n;
+    ls->pos = n ? A3_ARENA_PUSH_ARRAY(scratch, A3Vec4, n) : 0;
+    ls->strength = n ? A3_ARENA_PUSH_ARRAY(scratch, f32, n) : 0;
+    for (u32 i = 0; i < n; ++i) {
+        u32 x = (i % 256) * 3, y = i / 256;
+        r->light_texels[(y * 256 * 3) + x] = c[i].pos;
+        r->light_texels[(y * 256 * 3) + x + 1] = c[i].color;
+        r->light_texels[(y * 256 * 3) + x + 2] = c[i].dir;
+        ls->pos[i] = c[i].pos;
+        ls->strength[i] = c[i].strength;
+    }
+    if (n) a3_rhi_texture_update(r->light_tex, 0, 0, 256 * 3, (i32)((n + 255) / 256), r->light_texels);
+}
+
+/* Up to `max` lights whose range reaches the sphere, most important first. */
+static void pick_lights(const LightSet *ls, A3Vec4 sphere, u32 max, A3Vec4 *out0, A3Vec4 *out1) {
+    f32 idx[MAX_OBJECT_LIGHTS], score[MAX_OBJECT_LIGHTS];
+    u32 k = 0;
+    for (u32 i = 0; i < ls->count; ++i) {
+        A3Vec4 p = ls->pos[i];
+        f32 dx = p.x - sphere.x, dy = p.y - sphere.y, dz = p.z - sphere.z;
+        f32 reach = p.w + sphere.w;
+        f32 d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > reach * reach) continue;
+        f32 d = a3_maxf(a3_sqrtf(d2) - sphere.w, 0.0f);
+        f32 sc = ls->strength[i] / (d * d + 1.0f);
+        if (k < max) { idx[k] = (f32)i; score[k] = sc; k++; }
+        else {
+            u32 worst = 0;
+            for (u32 j = 1; j < k; ++j) if (score[j] < score[worst]) worst = j;
+            if (sc <= score[worst]) continue;
+            idx[worst] = (f32)i;
+            score[worst] = sc;
+        }
+    }
+    f32 o[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+    for (u32 i = 0; i < k; ++i) o[i] = idx[i];
+    *out0 = a3_v4(o[0], o[1], o[2], o[3]);
+    *out1 = a3_v4(o[4], o[5], o[6], o[7]);
 }
 
 static A3Mat4 shadow_matrix(A3Renderer *r, const A3RenderView *v, A3Vec3 sun_dir) {
@@ -435,18 +543,16 @@ static void set_frame_uniforms(A3RhiShader s, const A3RenderView *v, const Light
     a3_rhi_set_vec3(s, "u_sun_dir", ls->sun_dir);
     a3_rhi_set_vec3(s, "u_sun_color", ls->sun_color);
     a3_rhi_set_vec3(s, "u_sky_color", a3_v4_xyz(ws->sky_top));
+    a3_rhi_set_vec3(s, "u_sky_horizon", a3_v4_xyz(ws->sky_horizon));
     a3_rhi_set_vec3(s, "u_ground_color", a3_v4_xyz(ws->ground_color));
     a3_rhi_set_float(s, "u_ambient", ws->ambient_intensity);
     a3_rhi_set_vec3(s, "u_fog_color", a3_v4_xyz(ws->fog_color));
     a3_rhi_set_float(s, "u_fog_density", ws->fog_density);
     a3_rhi_set_int(s, "u_shadows_enabled", shadows ? 1 : 0);
     a3_rhi_set_vec2(s, "u_shadow_texel", a3_v2(1.0f / (f32)shadow_size, 1.0f / (f32)shadow_size));
-    a3_rhi_set_int(s, "u_light_count", (i32)ls->count);
-    if (ls->count) {
-        a3_rhi_set_vec4_array(s, "u_light_pos", ls->pos, ls->count);
-        a3_rhi_set_vec4_array(s, "u_light_color", ls->color, ls->count);
-        a3_rhi_set_vec4_array(s, "u_light_dir", ls->dir, ls->count);
-    }
+    a3_rhi_set_int(s, "u_light_tex", 4);
+    a3_rhi_set_int(s, "u_fog_in_post", 1);
+    A3_UNUSED(ls);
 }
 
 void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
@@ -466,7 +572,7 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
     ws_copy.fog_color = a3_color_to_linear(ws->fog_color);
     ws_copy.ambient = a3_color_to_linear(ws->ambient);
     LightSet ls;
-    gather_lights(r, w, v->camera_pos, &ls);
+    gather_lights(r, w, v->camera_pos, &ls, scratch);
     r->info.lights = ls.count + (ls.has_sun ? 1 : 0);
 
     /* ---- gather renderables ---- */
@@ -516,6 +622,13 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
     }
     r->info.visible = n_visible;
     r->info.culled = n - n_visible;
+
+    /* ---- lights per visible object (most important MAX_OBJECT_LIGHTS) ---- */
+    u32 per_object = (u32)A3_CLAMP(r->settings.max_lights, 0, MAX_OBJECT_LIGHTS);
+    for (u32 i = 0; i < n; ++i) {
+        if (visible[i] && ls.count && per_object) pick_lights(&ls, items[i].sphere, per_object, &items[i].inst.lights0, &items[i].inst.lights1);
+        else items[i].inst.lights0 = items[i].inst.lights1 = a3_v4(-1, -1, -1, -1);
+    }
 
     /* ---- sort + batch visible items; also collect shadow casters ---- */
     A3SortPair *pairs = n ? A3_ARENA_PUSH_ARRAY(scratch, A3SortPair, n * 2) : 0;
@@ -604,6 +717,7 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
     if (v->draw_sky && r->sky.id) {
         A3RenderState st = { A3_BLEND_OPAQUE, A3_CULL_NONE, A3_DEPTH_OFF, 0, 0, { 0 }, 0 };
         a3_rhi_set_state(&st);
+        a3_rhi_set_draw_buffers(1);
         a3_rhi_shader_bind(r->sky);
         A3Mat4 inv_vp;
         if (!a3_mat4_inverse(&view_proj, &inv_vp)) inv_vp = a3_mat4_identity();
@@ -616,8 +730,11 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
         a3_rhi_set_vec3(r->sky, "u_sun_color", ls.has_sun ? ls.sun_color : a3_v3_zero());
         a3_rhi_draw_fullscreen();
     }
+    a3_rhi_set_draw_buffers(2);
     a3_rhi_bind_texture(1, r->shadow_tex);
+    a3_rhi_bind_texture(4, r->light_tex);
     u32 bound_material = 0xFFFFFFFFu;
+    b32 color_only = 0;
     A3RhiShader shader = r->lit;
     for (u32 b = 0; b < nb; ++b) {
         Batch *bt = &batches[b];
@@ -633,6 +750,7 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
                 a3_rhi_bind_texture(3, mat->textures[1] ? a3_assets_texture_rhi(mat->textures[1]) : a3_assets_white_texture());
             }
         }
+        if (bt->transparent && !color_only) { a3_rhi_set_draw_buffers(1); color_only = 1; }   /* keep the surface normals behind glass */
         A3RenderState st = { bt->transparent ? A3_BLEND_ALPHA : A3_BLEND_OPAQUE, bt->transparent ? A3_CULL_NONE : A3_CULL_BACK,
                              bt->transparent ? A3_DEPTH_LESS_NOWRITE : A3_DEPTH_LESS_WRITE, r->settings.wireframe, 0, { 0 }, 0 };
         a3_rhi_set_state(&st);
@@ -645,6 +763,7 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
     }
 
     /* ---- particles (after opaque geometry; depth tested, no depth writes) ---- */
+    a3_rhi_set_draw_buffers(1);
     {
         A3ParticleBatch pb[128];
         const A3ParticleInstance *pinst = 0;
@@ -698,29 +817,115 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
     }
     a3_rhi_gpu_timer_end();
 
-    /* ---- post: tonemap (+FXAA) ---- */
+    /* ---- post: SSAO -> composite (AO, reflections, height fog) -> bloom -> tonemap (+FXAA) ---- */
     A3RenderState post = { A3_BLEND_OPAQUE, A3_CULL_NONE, A3_DEPTH_OFF, 0, 0, { 0 }, 0 };
-    if (r->settings.fxaa && r->fxaa.id) {
-        a3_rhi_target_bind(r->ldr_target, r->rt_w, r->rt_h);
+    TargetSet *ts = r->cur;
+    b32 zo = a3_rhi_depth_zero_to_one();
+    A3Mat4 inv_proj, inv_view;
+    if (!a3_mat4_inverse(&v->proj, &inv_proj)) inv_proj = a3_mat4_identity();
+    inv_view = a3_mat4_inverse_affine(&v->view);
+    b32 do_ssao = r->settings.ssao && ws->ao_strength > 0 && r->ssao.id && ts->ao_target.id;
+    if (do_ssao) {
+        a3_rhi_target_bind(ts->ao_target, r->rt_w, r->rt_h);
         a3_rhi_set_state(&post);
-        a3_rhi_shader_bind(r->tonemap);
-        a3_rhi_set_float(r->tonemap, "u_exposure", v->exposure > 0 ? v->exposure : 1.0f);
-        a3_rhi_set_float(r->tonemap, "u_vignette", r->settings.vignette);
-        a3_rhi_bind_texture(0, r->hdr_color);
+        a3_rhi_shader_bind(r->ssao);
+        a3_rhi_set_int(r->ssao, "u_depth", 0);
+        a3_rhi_set_int(r->ssao, "u_normal", 1);
+        a3_rhi_set_mat4(r->ssao, "u_proj", &v->proj);
+        a3_rhi_set_mat4(r->ssao, "u_inv_proj", &inv_proj);
+        a3_rhi_set_mat4(r->ssao, "u_view", &v->view);
+        a3_rhi_set_int(r->ssao, "u_zo", zo ? 1 : 0);
+        a3_rhi_set_float(r->ssao, "u_radius", 0.6f);
+        a3_rhi_bind_texture(0, r->hdr_depth);
+        a3_rhi_bind_texture(1, ts->normal);
         a3_rhi_draw_fullscreen();
+        a3_rhi_target_bind(ts->ao_blur_target, r->rt_w, r->rt_h);
+        a3_rhi_shader_bind(r->blur4);
+        a3_rhi_set_int(r->blur4, "u_src", 0);
+        a3_rhi_set_vec2(r->blur4, "u_texel", a3_v2(1.0f / r->rt_w, 1.0f / r->rt_h));
+        a3_rhi_bind_texture(0, ts->ao);
+        a3_rhi_draw_fullscreen();
+    }
+    if (r->composite.id) {
+        a3_rhi_target_bind(ts->post_target, r->rt_w, r->rt_h);
+        a3_rhi_set_state(&post);
+        a3_rhi_shader_bind(r->composite);
+        a3_rhi_set_int(r->composite, "u_hdr", 0);
+        a3_rhi_set_int(r->composite, "u_depth", 1);
+        a3_rhi_set_int(r->composite, "u_normal", 2);
+        a3_rhi_set_int(r->composite, "u_ao", 3);
+        a3_rhi_set_mat4(r->composite, "u_proj", &v->proj);
+        a3_rhi_set_mat4(r->composite, "u_inv_proj", &inv_proj);
+        a3_rhi_set_mat4(r->composite, "u_view", &v->view);
+        a3_rhi_set_mat4(r->composite, "u_inv_view", &inv_view);
+        a3_rhi_set_int(r->composite, "u_zo", zo ? 1 : 0);
+        a3_rhi_set_vec3(r->composite, "u_camera_pos", v->camera_pos);
+        a3_rhi_set_float(r->composite, "u_ao_strength", do_ssao ? ws->ao_strength : 0.0f);
+        a3_rhi_set_float(r->composite, "u_ssr_strength", r->settings.ssr ? ws->reflection_strength : 0.0f);
+        a3_rhi_set_vec3(r->composite, "u_fog_color", a3_v4_xyz(ws_copy.fog_color));
+        a3_rhi_set_float(r->composite, "u_fog_density", ws->fog_density);
+        a3_rhi_set_float(r->composite, "u_fog_falloff", ws->fog_height_falloff);
+        a3_rhi_set_vec3(r->composite, "u_sun_dir", ls.sun_dir);
+        a3_rhi_set_vec3(r->composite, "u_sun_color", ls.has_sun ? ls.sun_color : a3_v3_zero());
+        a3_rhi_bind_texture(0, r->hdr_color);
+        a3_rhi_bind_texture(1, r->hdr_depth);
+        a3_rhi_bind_texture(2, ts->normal);
+        a3_rhi_bind_texture(3, do_ssao ? ts->ao_blur : a3_assets_white_texture());
+        a3_rhi_draw_fullscreen();
+    }
+    A3RhiTexture scene_tex = r->composite.id ? ts->post : r->hdr_color;
+    b32 do_bloom = r->settings.bloom && ws->bloom_intensity > 0 && r->bloom_down.id && ts->bloom_target[0].id;
+    if (do_bloom) {
+        a3_rhi_set_state(&post);
+        a3_rhi_shader_bind(r->bloom_down);
+        a3_rhi_set_int(r->bloom_down, "u_src", 0);
+        a3_rhi_set_float(r->bloom_down, "u_threshold", ws->bloom_threshold);
+        A3RhiTexture src = scene_tex;
+        i32 sw = r->rt_w, sh = r->rt_h;
+        for (u32 i = 0; i < BLOOM_MIPS; ++i) {
+            a3_rhi_target_bind(ts->bloom_target[i], ts->bloom_w[i], ts->bloom_h[i]);
+            a3_rhi_set_int(r->bloom_down, "u_prefilter", i == 0 ? 1 : 0);
+            a3_rhi_set_vec2(r->bloom_down, "u_texel", a3_v2(1.0f / sw, 1.0f / sh));
+            a3_rhi_bind_texture(0, src);
+            a3_rhi_draw_fullscreen();
+            src = ts->bloom[i];
+            sw = ts->bloom_w[i];
+            sh = ts->bloom_h[i];
+        }
+        A3RenderState add = { A3_BLEND_ADDITIVE, A3_CULL_NONE, A3_DEPTH_OFF, 0, 0, { 0 }, 0 };
+        a3_rhi_set_state(&add);
+        a3_rhi_shader_bind(r->bloom_up);
+        a3_rhi_set_int(r->bloom_up, "u_src", 0);
+        for (i32 i = BLOOM_MIPS - 1; i > 0; --i) {
+            a3_rhi_target_bind(ts->bloom_target[i - 1], ts->bloom_w[i - 1], ts->bloom_h[i - 1]);
+            a3_rhi_set_vec2(r->bloom_up, "u_texel", a3_v2(1.0f / ts->bloom_w[i], 1.0f / ts->bloom_h[i]));
+            a3_rhi_bind_texture(0, ts->bloom[i]);
+            a3_rhi_draw_fullscreen();
+        }
+    }
+    f32 exposure = (v->exposure > 0 ? v->exposure : 1.0f) * (ws->exposure > 0 ? ws->exposure : 1.0f);
+    A3Vec4 tint = a3_color_to_linear(ws->tint);
+    if (r->settings.fxaa && r->fxaa.id) a3_rhi_target_bind(r->ldr_target, r->rt_w, r->rt_h);
+    else a3_rhi_target_bind(v->target, v->width, v->height);
+    a3_rhi_set_state(&post);
+    a3_rhi_shader_bind(r->tonemap);
+    a3_rhi_set_int(r->tonemap, "u_hdr", 0);
+    a3_rhi_set_int(r->tonemap, "u_bloom", 1);
+    a3_rhi_set_float(r->tonemap, "u_exposure", exposure);
+    a3_rhi_set_float(r->tonemap, "u_vignette", r->settings.vignette);
+    a3_rhi_set_float(r->tonemap, "u_bloom_intensity", do_bloom ? ws->bloom_intensity : 0.0f);
+    a3_rhi_set_float(r->tonemap, "u_saturation", ws->saturation > 0 ? ws->saturation : 1.0f);
+    a3_rhi_set_float(r->tonemap, "u_contrast", ws->contrast > 0 ? ws->contrast : 1.0f);
+    a3_rhi_set_vec3(r->tonemap, "u_tint", (tint.x + tint.y + tint.z) > 0 ? a3_v4_xyz(tint) : a3_v3_one());
+    a3_rhi_bind_texture(0, scene_tex);
+    a3_rhi_bind_texture(1, do_bloom ? ts->bloom[0] : scene_tex);
+    a3_rhi_draw_fullscreen();
+    if (r->settings.fxaa && r->fxaa.id) {
         a3_rhi_target_bind(v->target, v->width, v->height);
         a3_rhi_set_state(&post);
         a3_rhi_shader_bind(r->fxaa);
         a3_rhi_set_vec2(r->fxaa, "u_texel", a3_v2(1.0f / r->rt_w, 1.0f / r->rt_h));
         a3_rhi_bind_texture(0, r->ldr_color);
-        a3_rhi_draw_fullscreen();
-    } else {
-        a3_rhi_target_bind(v->target, v->width, v->height);
-        a3_rhi_set_state(&post);
-        a3_rhi_shader_bind(r->tonemap);
-        a3_rhi_set_float(r->tonemap, "u_exposure", v->exposure > 0 ? v->exposure : 1.0f);
-        a3_rhi_set_float(r->tonemap, "u_vignette", r->settings.vignette);
-        a3_rhi_bind_texture(0, r->hdr_color);
         a3_rhi_draw_fullscreen();
     }
     r->last_target = v->target;
@@ -852,6 +1057,15 @@ static u32 material_from_path(A3Renderer *r, const char *path) {
     u64 key = a3_hash_str(path), val = 0;
     if (a3_hashmap_get(&r->path_materials, key, &val)) return val == 0xFFFFFFFFu ? 0 : (u32)val;
     u32 id = 0;
+    if (a3_str_starts_with(path, "builtin:")) {
+        const char *code = a3_builtin_material_code(path);
+        A3ShaderCompileResult res;
+        if (code) id = a3_renderer_material_create(r, code, path, &res);
+        if (!code) a3_log_hint(A3_LOG_ERROR, "render", "Built-in materials: building, artdeco, tower, road, sidewalk, sand, water, glass, neon, carpaint, palm_trunk, foliage, metal.", "unknown built-in material '%s'", path);
+        else if (!id) A3_ERROR("render", "built-in material %s failed to compile:\n%s", path, res.raw_log);
+        a3_hashmap_put(&r->path_materials, key, id ? id : 0xFFFFFFFFu);
+        return id;
+    }
     char abs[A3_PATH_MAX * 2];
     a3_assets_path(path, abs, sizeof(abs));
     A3FileData fd;

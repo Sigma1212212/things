@@ -23,7 +23,10 @@ typedef struct A3RenderSettings {
     f32 vignette;
     b32 frustum_culling;
     b32 wireframe;
-    i32 max_lights;          /* <= 16 */
+    i32 max_lights;          /* lights per object, <= 8 (hundreds per frame) */
+    b32 ssao;                /* screen-space ambient occlusion */
+    b32 ssr;                 /* screen-space reflections */
+    b32 bloom;
 } A3RenderSettings;
 
 typedef struct A3RenderView {
@@ -75,6 +78,11 @@ void a3_debug_set_depth_test(A3Renderer *r, b32 on);
  * surface_code must define `void a3_surface(inout A3Surface s)`.
  * Error line numbers in `result` refer to surface_code. Returns a material
  * id (>0) or 0 on failure. */
+/* Procedural materials by name: builtin:building, artdeco, tower, road, sidewalk, sand, water, glass, neon, carpaint, palm_trunk, foliage, metal. */
+u32  a3_builtin_material_count(void);
+const char *a3_builtin_material_name(u32 i);
+const char *a3_builtin_material_doc(u32 i);
+const char *a3_builtin_material_code(const char *name);   /* surface GLSL, NULL if unknown */
 u32  a3_renderer_material_create(A3Renderer *r, const char *surface_code, const char *name, A3ShaderCompileResult *result);
 b32  a3_renderer_material_update(A3Renderer *r, u32 material, const char *surface_code, A3ShaderCompileResult *result);
 void a3_renderer_material_destroy(A3Renderer *r, u32 material);
