@@ -1,7 +1,8 @@
 /*
  * ASM3D - a3_audio_backend.h (internal)
  * Output device interface. Implementations: a3_audio_wasapi.c (Windows),
- * a3_audio_alsa.c (Linux, libasound loaded at runtime), a3_audio_null.c.
+ * a3_audio_alsa.c (Linux, libasound loaded at runtime), a3_audio_web.c
+ * (browser, WebAudio), a3_audio_null.c.
  */
 #ifndef A3_AUDIO_BACKEND_H
 #define A3_AUDIO_BACKEND_H

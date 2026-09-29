@@ -16,7 +16,7 @@ listed. **Planned** = not implemented yet.
 | x86-64 SSE assembly kernels | Working | SIMD math, frustum culling and physics, with the same kernel bodies on Windows and Linux (Windows goes through small ABI entry stubs). Each kernel has a C reference, and tests prove bit-identical results on both operating systems. |
 | Other CPUs (C reference path) | Working in tests | The same code without assembly, used for WebAssembly. |
 | WebAssembly (engine) | Working | Compiles with clang/wasm-ld (no emscripten, no libc). The full test suite passes in Node. |
-| Browser editor (WebAssembly + WebGL2) | Working | The real editor in a browser tab: `build/web/`, see docs/WEB_EDITOR.md. Projects are stored in the browser and can be imported/exported as zip. Its self test passes in headless Chromium (67 checks). Not yet: Build Game, sound, threads, wireframe. |
+| Browser editor (WebAssembly + WebGL2) | Working | The real editor in a browser tab: `build/web/`, see docs/WEB_EDITOR.md. Projects are stored in the browser and can be imported/exported as zip. Its self test (67 checks) and a click-and-type test pass in headless Chromium. Sound through WebAudio. Not yet: Build Game, threads, wireframe. |
 | Exporting games to the web (HTML player) | Planned | The browser editor runs games in play mode; a standalone web player export is not built yet. |
 | macOS | Planned | The platform and window layers are isolated (`a3_platform.h`, `a3_window.h`). |
 
@@ -119,7 +119,8 @@ listed. **Planned** = not implemented yet.
   the right node, runs a script in play mode (including hot reload and error
   markers), models a tower in Edit Mode and collects an orb in the scripted
   Platformer template (70 checks).
-- `node tools/test_web_editor.mjs build/web --selftest`: the editor self
-  test inside headless Chromium with WebGL2 (67 checks).
+- `node tools/test_web_editor.mjs build/web --selftest` and `--interactive`:
+  the editor self test inside headless Chromium with WebGL2 (67 checks), and
+  a mouse/keyboard session that creates, plays and reloads a project.
 - `asm3d_player --frames N --screenshot out.png` and
   `asm3d_editor --frames N --screenshot out.png` are used for visual checks.

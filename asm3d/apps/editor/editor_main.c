@@ -1220,9 +1220,15 @@ A3_WASM_EXPORT("a3_web_editor_start") int a3_web_editor_start(char *args) {
     static char *argv[32];
     int argc = 0;
     argv[argc++] = (char *)"asm3d_editor";
-    for (char *p = args; p && *p && argc < 31;) {
+    for (char *p = args; p && *p && argc < 31;) {   /* "double quotes" keep spaces */
         while (*p == ' ') *p++ = 0;
         if (!*p) break;
+        if (*p == '"') {
+            argv[argc++] = ++p;
+            while (*p && *p != '"') ++p;
+            if (*p) *p++ = 0;
+            continue;
+        }
         argv[argc++] = p;
         while (*p && *p != ' ') ++p;
     }

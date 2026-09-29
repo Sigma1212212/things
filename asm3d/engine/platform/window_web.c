@@ -85,8 +85,16 @@ b32 a3_window_poll(A3Window *w) {
     a3_input_begin_frame(in);
     w->width = js_canvas_width();
     w->height = js_canvas_height();
-    for (u32 i = 0; i < w->event_count; ++i) {
+    u32 i = 0;
+    b32 moved = 0;
+    for (; i < w->event_count; ++i) {
         WebEvent *e = &w->events[i];
+        /* a release in the same frame as its press waits for the next frame,
+         * so immediate-mode widgets see the button down for at least a frame */
+        if (e->type == EV_MOUSE_UP && e->a >= 0 && e->a < A3_MOUSE_BUTTON_COUNT && in->mouse_pressed[e->a]) break;
+        /* likewise a press right after the pointer moved: widgets hover first, then take the click */
+        if (e->type == EV_MOUSE_DOWN && moved) break;
+        if (e->type == EV_KEY_UP && e->a > 0 && e->a < A3_KEY_COUNT && in->keys_pressed[e->a]) break;
         switch (e->type) {
         case EV_KEY_DOWN:
             if (e->a > 0 && e->a < A3_KEY_COUNT) {
@@ -104,6 +112,7 @@ b32 a3_window_poll(A3Window *w) {
         case EV_MOUSE_MOVE: {
             A3Vec2 p = a3_v2(e->x, e->y);
             if (!w->captured) in->mouse_delta = a3_v2_add(in->mouse_delta, a3_v2_sub(p, in->mouse_pos));
+            if (p.x != in->mouse_pos.x || p.y != in->mouse_pos.y) moved = 1;
             in->mouse_pos = p;
         } break;
         case EV_MOUSE_DELTA:
@@ -135,7 +144,10 @@ b32 a3_window_poll(A3Window *w) {
         default: break;
         }
     }
-    w->event_count = 0;
+    /* keep the deferred events for the next frame */
+    u32 left = w->event_count - i;
+    if (left && i) a3_memmove(w->events, w->events + i, left * sizeof(WebEvent));
+    w->event_count = left;
     in->mouse_captured = w->captured;
     return 1;   /* a browser tab is closed by the browser, not by the engine */
 }

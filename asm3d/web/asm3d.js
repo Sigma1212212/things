@@ -295,6 +295,12 @@ export async function startEditor(opts) {
   const str = (p, n) => dec.decode(new Uint8Array(memory.buffer, p, n));
   let clipboard = '';
   const G = makeGL(gl, mem, (n) => exports.a3_web_alloc(n));
+  const audio = { ctx: null, node: null };
+  const api = { fs, exports: null, flush, restored, exitCode: 0, running: false, frames: 0 };
+  // browsers only start sound after a user gesture
+  const unlock = () => { if (audio.ctx && audio.ctx.state !== 'running') audio.ctx.resume().catch(() => {}); };
+  addEventListener('mousedown', unlock);
+  addEventListener('keydown', unlock);
 
   const resize = () => {
     const r = canvas.getBoundingClientRect();
@@ -323,6 +329,27 @@ export async function startEditor(opts) {
       get_clipboard: (dst, cap) => { const b = new TextEncoder().encode(clipboard); const k = Math.min(cap, b.length); new Uint8Array(memory.buffer).set(b.subarray(0, k), dst); return k; },
     },
     gl: G,
+    audio: {
+      open: (rate) => {
+        const AC = self.AudioContext || self.webkitAudioContext;
+        if (!AC) return 0;
+        try { audio.ctx = new AC({ sampleRate: rate }); } catch (e) { try { audio.ctx = new AC(); } catch (e2) { return 0; } }
+        const ctx = audio.ctx;
+        const node = ctx.createScriptProcessor(2048, 0, 2);
+        node.onaudioprocess = (e) => {
+          const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
+          if (!exports || !api.running) { L.fill(0); R.fill(0); return; }
+          const n = L.length;
+          const p = exports.a3_web_audio_render(n);
+          const buf = new Float32Array(memory.buffer, p, n * 2);
+          for (let i = 0; i < n; i++) { L[i] = buf[i * 2]; R[i] = buf[i * 2 + 1]; }
+        };
+        node.connect(ctx.destination);
+        audio.node = node;
+        return ctx.sampleRate | 0;
+      },
+      close: () => { if (audio.node) audio.node.disconnect(); if (audio.ctx) audio.ctx.close(); audio.ctx = audio.node = null; },
+    },
   };
 
   status('Downloading the editor...');
@@ -371,8 +398,11 @@ export async function startEditor(opts) {
   const argBytes = new TextEncoder().encode((opts.args || '') + '\0');
   const argPtr = exports.a3_web_alloc(argBytes.length);
   new Uint8Array(memory.buffer).set(argBytes, argPtr);
+  api.exports = exports;
+  api.running = true;             // the audio callback may run during start
   const rc = exports.a3_web_editor_start(argPtr);
-  const api = { fs, exports, flush, restored, exitCode: rc, running: rc < 0, frames: 0 };
+  api.exitCode = rc;
+  api.running = rc < 0;
   if (rc >= 0) { flush(); return api; }
   canvas.focus();
   const frame = () => {

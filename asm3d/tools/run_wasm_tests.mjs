@@ -19,6 +19,7 @@ const imports = {
     abort: (p, n) => { throw new Error('abort: ' + str(p, n)); },
   },
   fs: fs.imports(() => memory),
+  audio: { open: () => 0, close: () => {} },   // no sound device under Node
 };
 const { instance } = await WebAssembly.instantiate(bytes, imports);
 memory = instance.exports.memory;

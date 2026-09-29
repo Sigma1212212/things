@@ -76,7 +76,7 @@ function openProject(path) {
 }
 
 function uniqueName(fs, base) {
-  base = base.replace(/[^A-Za-z0-9_-]/g, '') || 'Project';   // no spaces: paths go on the command line
+  base = base.replace(/[^A-Za-z0-9 _-]/g, '').trim() || 'Project';
   let name = base, i = 2;
   while (fs.exists('/user/projects/' + name)) name = base + i++;
   return name;
@@ -94,7 +94,7 @@ async function main() {
     }
     project = '/user/projects/NeonTide';
   }
-  if (project) args += ' --project ' + project;
+  if (project) args += ' --project "' + project + '"';
   let editor;
   try {
     editor = await startEditor({

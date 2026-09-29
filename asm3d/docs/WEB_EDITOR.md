@@ -8,7 +8,8 @@ swapped for the browser:
 |---|---|
 | X11 / Win32 window, OpenGL 3.3 | `engine/platform/window_web.c`: a `<canvas>` with WebGL2. Every OpenGL function the engine loads (the list in `engine/render/a3_gl.h`) becomes a WebAssembly import implemented on WebGL2 in `web/asm3d.js`, so `rhi_gl.c` and the renderer run unchanged. Shaders are compiled as GLSL ES 3.00. |
 | Files on disk | `web/a3fs.js`: a file tree in JavaScript. `/user` is saved in the browser (IndexedDB); new projects go to `/user/projects`. |
-| Threads, audio device | Jobs run on one thread; sound is off (no WebAudio output yet). |
+| Threads | Jobs run on one thread. |
+| WASAPI / ALSA sound | `engine/audio/a3_audio_web.c`: WebAudio pulls the engine's mixer on the page's thread. Browsers start sound after the first click or key press. |
 
 ## Run it
 
@@ -45,8 +46,10 @@ animation timeline and Edit Mode modeling.
 
 Not yet: **Build Game** (it needs a compiler toolchain and writes
 executables; download the project and build it with the desktop editor),
-sound, multithreading, file watching (files changed outside the editor are
-not reloaded), and wireframe drawing (WebGL has no polygon mode).
+multithreading, file watching (files changed outside the editor are not
+reloaded), wireframe drawing (WebGL has no polygon mode) and GPU timings.
+Sound uses the older ScriptProcessor API (browsers print a deprecation
+note); an AudioWorklet version is planned.
 
 ## How it is tested
 
@@ -54,5 +57,8 @@ not reloaded), and wireframe drawing (WebGL has no polygon mode).
 opens it in headless Chromium (software WebGL2 through SwiftShader) with
 Playwright, and runs the editor's self test inside the page: the same
 checks as `asm3d_editor --selftest`, minus the three that build a desktop
-executable (67 checks). `--shot out.png --query sample=1 --args "--play-at 3"`
-plays Neon Tide in the browser and saves a screenshot.
+executable (67 checks). `--interactive` clicks and types like a user:
+it creates a project from a template card, starts play mode with F5 and
+reloads the page to check that the project was saved in IndexedDB.
+`--shot out.png --query sample=1 --args "--play-at 3"` plays Neon Tide in the
+browser and saves a screenshot.
