@@ -14,9 +14,11 @@ swapped for the browser:
 
 ```sh
 cmake -S . -B build -G Ninja && cmake --build build   # needs clang + wasm-ld for the web target
-cd build/web && python3 -m http.server 8000           # any static web server
-# open http://localhost:8000
+build/asm3d_cli serve build/web --open                # http://localhost:8080 (any static server works)
 ```
+
+The Windows zip contains the built page in `browser-editor/`: run
+`asm3d_cli.exe serve browser-editor --open`.
 
 It needs a browser with WebGL2 (current Chrome, Edge, Firefox or Safari).
 Pages opened from `file://` cannot load the `.wasm` file; use a web server.

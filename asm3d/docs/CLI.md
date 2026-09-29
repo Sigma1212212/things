@@ -32,14 +32,17 @@ untouched. `asm3d_cli help` returns this list as JSON.
 | `entity list <scene>` | Hierarchy order with depth and component names |
 | `entity get <scene> <object> [Component[.field]]` | An object, a component or one value |
 | `entity add <scene> <name> [--parent P] [--at x,y,z] [--rotation x,y,z] [--scale x,y,z] [--primitive cube] [--model m.obj] [--script s.a3script] [--with A,B]` | Create an object |
-| `entity set <scene> <object> <Component.field> <value> [...]` | Set values (adds missing components) |
+| `entity set <scene> <object> <Component.field> <value> [...]` | Set values (adds missing components); `active false` disables the object |
 | `entity remove / rename / duplicate` | Delete, rename, copy (`--name`, `--at`) |
 | `component add / remove <scene> <object> <Component>` | Add or remove a component |
 | `script check <files...>` | Compile; errors with line, column and a suggestion |
 | `script run <file> [--call fn] [--args '[1,"a",[0,1,0]]']` | Run outside a scene: print output, return value, top-level variables |
 | `script eval "<expression>"` | Evaluate one expression |
 | `simulate <project> [--scene S] [--frames 120] [--dt 0.0166] [--keys space@10-20,w@0-60] [--watch A,B] [--trace N]` | Play headless; object states, script errors, HUD text |
-| `screenshot <project> [--frames 30] [--size 1280x720] [--camera x,y,z --look x,y,z] [--out file.png]` | Render to a PNG (needs OpenGL; on a Linux server run Xvfb) |
+| `screenshot <project> [--frames 30] [--size 1280x720] [--camera x,y,z --look x,y,z] [--out file.png]` | Render to a PNG (needs OpenGL; on a Linux server run Xvfb). Only the last frames are drawn, so long runs are fast |
+| `screenshot <project> --record <dir> [--record-from N] [--dt 0.0333]` | Save every frame from N on (game camera + HUD) as `frame_00000.png`...: turn them into a video with any encoder (see tools/make_trailer.sh) |
+| `world city <project> [--seed 1] [--time day\|sunset\|night] [--density 1] [--cars 40] [--pedestrians 60] [--no-traffic] [--no-lights] [--no-neon] [--scene S] [--startup] [--all]` | Generate the Sol Harbor city scene and its road graph (docs/CITY.md) |
+| `serve [folder] [--port 8080] [--open]` | Serve the browser editor (`build/web`) on localhost until Ctrl+C; prints one JSON line when listening |
 | `mesh ...` | Modeling operations (see docs/MODELING.md) |
 | `batch` | Read commands from stdin, one per line; print one JSON line each |
 
@@ -57,4 +60,4 @@ asm3d_cli simulate MyGame --frames 120 --watch Crate
 asm3d_cli build MyGame
 ```
 
-Tested by `tools/test_cli.py` (79 checks, Linux and Windows).
+Tested by `tools/test_cli.py` (89 checks, Linux and Windows).

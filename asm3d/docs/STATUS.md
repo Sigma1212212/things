@@ -93,6 +93,7 @@ listed. **Planned** = not implemented yet.
 | Validate and build | Working | Shared with the editor (`engine/runtime/a3_project.c`); validation also compiles every script. |
 | Screenshots and frame recording (`screenshot --record`) | Working | Needs OpenGL 3.3 (a desktop session, or Xvfb on Linux servers). |
 | City generation (`world city`) | Working | Writes a city scene, its road graph and a Traffic object into a project. |
+| Local web server for the browser editor (`serve`) | Working | Static files on 127.0.0.1 only. |
 | Project templates from the command line | Planned | `project new` makes the starter scene only; templates live in the editor. |
 
 ## Games
@@ -110,7 +111,7 @@ listed. **Planned** = not implemented yet.
   language and its engine bindings, the modeling kernels and operations,
   the city generator and road graph, driving and crashing a car, traffic). They run natively and as WebAssembly
   (`node tools/run_wasm_tests.mjs build/asm3d_tests.wasm`).
-- `tools/test_cli.py`: 79 end-to-end checks of `asm3d_cli` (Linux and
+- `tools/test_cli.py`: 89 end-to-end checks of `asm3d_cli` (Linux and
   Windows builds).
 - `asm3d_editor --selftest`: drives the real editor end to end. It creates a
   project, runs undo/redo, play/stop, save/reopen and a build, compiles every

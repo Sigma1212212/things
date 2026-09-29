@@ -150,6 +150,30 @@ try:
     run("entity", "add", scene, "Blob", "--model", "Assets/Models/Blob.obj")
     check(run("validate", "Game")["result"]["errors"] == 1, "model reference is valid (only Bad.a3script fails)") if os.path.exists(os.path.join(tmp, "Game/Assets/Scripts/Bad.a3script")) else None
 
+    # city generation writes a scene, a road graph and traffic
+    city = run("world", "city", "Game", "--density", "0.2", "--cars", "5", "--pedestrians", "5", "--scene", "Assets/Scenes/City.a3scene")["result"]
+    check(city["stats"]["buildings"] > 50 and city["stats"]["road_edges"] > 100, "world city stats")
+    check(os.path.exists(os.path.join(tmp, "Game/Assets/City/roads.json")), "world city road graph")
+    run("world", "city", "Game", "--scene", "Assets/Scenes/City.a3scene", expect_ok=False)   # exists: needs --all
+    run("world", "city", "Game", "--time", "noon", "--scene", "Assets/Scenes/C2.a3scene", expect_ok=False)
+    sim = run("simulate", "Game", "--scene", "Assets/Scenes/City.a3scene", "--frames", "30", "--watch", "Traffic Car 1")["result"]
+    check("Traffic Car 1" in sim["objects"], "traffic spawns cars")
+
+    # serve: a static server for the browser editor (one request, then exit)
+    web = os.path.join(tmp, "web")
+    os.makedirs(web, exist_ok=True)
+    with open(os.path.join(web, "index.html"), "w") as f:
+        f.write("<p>asm3d</p>")
+    import socket, time, urllib.request
+    sock = socket.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close()
+    srv = subprocess.Popen(cli + ["serve", web, "--port", str(port), "--max-requests", "1"], stdout=subprocess.PIPE, text=True, cwd=tmp)
+    first = json.loads(srv.stdout.readline())
+    check(first["ok"] and first["result"]["url"].endswith(":%d/" % port), "serve prints its URL")
+    body = urllib.request.urlopen("http://127.0.0.1:%d/" % port, timeout=30).read().decode()
+    check("asm3d" in body, "serve returns index.html")
+    srv.wait(timeout=30)
+    run("serve", os.path.join(tmp, "nothing-here"), expect_ok=False)
+
     # batch: one JSON line per command
     lines = run("batch", stdin="version\n# comment\nentity list \"%s\"\nnope\n" % scene)
     check(len(lines) == 3 and lines[0]["ok"] and lines[1]["ok"] and not lines[2]["ok"], "batch")

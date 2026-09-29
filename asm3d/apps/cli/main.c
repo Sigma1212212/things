@@ -51,7 +51,8 @@ typedef struct Args {
     u32 nopt;
 } Args;
 
-static const char *const g_flags[] = { "pretty", "verbose", "dry-run", "all", "no-save", "fields" };
+static const char *const g_flags[] = { "pretty", "verbose", "dry-run", "all", "no-save", "fields", "empty", "open", "startup",
+                                        "no-lights", "no-neon", "no-traffic", "smooth", "render-all", "selected", "edit-mesh" };
 
 static b32 is_flag(const char *k) {
     for (u32 i = 0; i < A3_ARRAY_COUNT(g_flags); ++i) if (a3_streq(k, g_flags[i])) return 1;
@@ -1331,6 +1332,8 @@ static b32 c_mesh_ops(const Args *a);
 /* Dispatch                                                                 */
 /* ======================================================================== */
 
+int a3_cli_serve(const char *root, int port, b32 open_browser, int max_requests);   /* cli_serve.c */
+
 static const Cmd g_cmds[] = {
     { "help", 0, c_help, "help", "Lists every command (this output)." },
     { "version", 0, c_version, "version", "Engine version, platform and assembly kernel backend." },
@@ -1356,6 +1359,7 @@ static const Cmd g_cmds[] = {
     { "script", "eval", c_script_eval, "script eval <expression>", "Evaluates one A3Script expression, e.g. \"lerp(0, 10, 0.25)\"." },
     { "simulate", 0, c_simulate, "simulate <project> [--scene S] [--frames 120] [--dt 0.0166] [--keys space@10-20,w@0-60] [--watch A,B] [--trace N]", "Plays the game headless (no window) and reports object states, script errors and HUD text." },
     { "screenshot", 0, c_screenshot, "screenshot <project> [--scene S] [--frames 30] [--size 1280x720] [--camera x,y,z --look x,y,z] [--out file.png] [--record dir [--record-from N]]", "Plays for some frames in a hidden window and saves an image (needs OpenGL). --record saves every frame of the game camera (with HUD) as frame_00000.png... for videos." },
+    { "serve", 0, 0, "serve [folder] [--port 8080] [--open]", "Serves the browser editor (build/web) on http://localhost:8080 until Ctrl+C. Prints one JSON line when listening." },
     { "world", "city", c_world_city, "world city <project> [--scene Assets/Scenes/City.a3scene] [--seed 1] [--time day|sunset|night] [--density 1] [--no-lights] [--no-neon] [--cars 40] [--pedestrians 60] [--no-traffic] [--startup] [--all]", "Generates Sol Harbor, a coastal city (towers, Art Deco beachfront, causeways, port) plus its road graph in Assets/City/roads.json." },
     { "mesh", "new", c_mesh_new, "mesh new <cube|plane|grid|cylinder|sphere|cone|torus> --out file.obj [--size 1] [--segments 16] [--rings 8] [--smooth]", "Creates a model with the modeling kernels." },
     { "mesh", "info", c_mesh_info, "mesh info <file.obj>", "Vertex, edge, face counts, bounds and whether the mesh is closed." },
@@ -1436,6 +1440,13 @@ int main(int argc, char **argv) {
     if (argc < 2) {
         run_command(1, (char *[]){ "help", 0 });
         return 0;
+    }
+    if (a3_streq(argv[1], "serve")) {
+        /* long-running: prints its JSON line when listening, then serves */
+        Args sa;
+        args_parse(&sa, argc, argv, 2);
+        const char *port = opt(&sa, "port", "8080");
+        return a3_cli_serve(arg(&sa, 0) ? arg(&sa, 0) : ".", (int)atoi(port), has_opt(&sa, "open"), atoi(opt(&sa, "max-requests", "0")));
     }
     if (a3_streq(argv[1], "batch")) {
         char line[8192];

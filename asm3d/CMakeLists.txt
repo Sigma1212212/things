@@ -115,8 +115,11 @@ if(WIN32 OR (UNIX AND NOT APPLE))
   target_compile_options(asm3d_player PRIVATE ${A3_WARNINGS})
 
   # Command-line tool for automation and AI assistants (console program, JSON output)
-  add_executable(asm3d_cli apps/cli/main.c)
+  add_executable(asm3d_cli apps/cli/main.c apps/cli/cli_serve.c)
   target_link_libraries(asm3d_cli PRIVATE asm3d_desktop)
+  if(WIN32)
+    target_link_libraries(asm3d_cli PRIVATE ws2_32)
+  endif()
   target_compile_options(asm3d_cli PRIVATE ${A3_WARNINGS})
 
   file(GLOB A3_EDITOR_SOURCES CONFIGURE_DEPENDS apps/editor/*.c)
