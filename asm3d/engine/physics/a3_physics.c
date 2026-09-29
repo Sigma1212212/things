@@ -139,6 +139,7 @@ static void character_on_add(A3World *w, A3Entity e, void *data) {
 }
 
 void a3_physics_register(void) {
+    a3_world_on_destroy(a3_physics_release);
     if (A3_T_RIGIDBODY != 0xFFFFFFFFu) return;
     A3CRigidBody rb;
     a3_zero_struct(&rb);

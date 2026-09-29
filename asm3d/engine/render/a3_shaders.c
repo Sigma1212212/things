@@ -230,6 +230,9 @@ const char *A3_SHADER_TONEMAP_FS =
     "    c = pow(c, vec3(1.0 / 2.2));\n"
     "    vec2 d = v_uv - 0.5;\n"
     "    c *= 1.0 - u_vignette * dot(d, d) * 1.6;\n"
+    /* +-0.5 LSB triangular-ish dither: removes banding in smooth gradients (sky, light falloff) */
+    "    float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) + fract(sin(dot(gl_FragCoord.xy, vec2(39.3468, 11.1353))) * 24634.6345) - 1.0;\n"
+    "    c += n / 255.0;\n"
     "    o_color = vec4(c, dot(c, vec3(0.299, 0.587, 0.114)));\n" /* luma in alpha for FXAA */
     "}\n";
 

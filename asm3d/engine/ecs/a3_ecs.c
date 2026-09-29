@@ -64,8 +64,17 @@ void a3_world_clear(A3World *w) {
     w->structure_version++;
 }
 
+static A3WorldDestroyFn g_destroy_fns[8];
+static u32 g_destroy_count;
+
+void a3_world_on_destroy(A3WorldDestroyFn fn) {
+    for (u32 i = 0; i < g_destroy_count; ++i) if (g_destroy_fns[i] == fn) return;
+    if (g_destroy_count < A3_ARRAY_COUNT(g_destroy_fns)) g_destroy_fns[g_destroy_count++] = fn;
+}
+
 void a3_world_destroy(A3World *w) {
     if (!w) return;
+    for (u32 i = 0; i < g_destroy_count; ++i) g_destroy_fns[i](w); /* modules free per-world state */
     a3_world_clear(w);
     a3_free(w);
 }

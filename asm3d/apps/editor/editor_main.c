@@ -14,6 +14,7 @@
 #include "editor.h"
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
+#include "../../engine/particles/a3_particles.h"
 #include "../../engine/resource/a3_assets.h"
 #include "../../engine/scene/a3_scene_io.h"
 #include "../../engine/core/a3_log.h"
@@ -370,6 +371,19 @@ static void create_menu_items(A3Editor *ed, A3Ui *ui) {
     }
     if (a3_ui_menu_item(ui, "Camera", 0, 1)) ed_create_entity(ed, "Camera", A3_PRIM_NONE, "Camera");
     if (a3_ui_menu_item(ui, "Sound", 0, 1)) ed_create_entity(ed, "Sound", A3_PRIM_NONE, "AudioSource");
+    if (a3_ui_begin_menu(ui, "Particles")) {
+        for (u32 p = 0; p < A3_PARTICLES_PRESET_COUNT; ++p) {
+            if (!a3_ui_menu_item(ui, a3_particle_preset_names[p], 0, 1)) continue;
+            A3Entity e = ed_create_entity(ed, a3_particle_preset_names[p], A3_PRIM_NONE, "ParticleEmitter");
+            A3CParticleEmitter *em = ed->world ? (A3CParticleEmitter *)a3_component_get(ed->world, e, A3_T_PARTICLE_EMITTER) : 0;
+            if (em) {
+                a3_particles_preset(em, p);
+                A3CTransform *t = a3_transform(ed->world, e);
+                if (t && (p == A3_PARTICLES_RAIN || p == A3_PARTICLES_SNOW)) t->position.y += 12.0f; /* weather falls from above */
+            }
+        }
+        a3_ui_end_menu(ui);
+    }
     a3_ui_menu_separator(ui);
     if (a3_ui_menu_item(ui, "Player (First Person)", 0, 1)) ed_create_entity(ed, "Player", A3_PRIM_NONE, "CharacterController");
     if (a3_ui_menu_item(ui, "Physics Crate", 0, 1)) {

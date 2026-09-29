@@ -47,6 +47,7 @@ typedef struct A3RenderFrameInfo {
     u32 batches;
     u32 shadow_casters;
     u32 lights;
+    u32 particles;
     f64 cpu_ms;
 } A3RenderFrameInfo;
 

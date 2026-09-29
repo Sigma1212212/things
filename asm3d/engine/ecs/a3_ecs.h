@@ -80,6 +80,10 @@ void     a3_world_clear(A3World *w);
 /* Applies deferred destroys; call once per frame after systems run. */
 void     a3_world_flush(A3World *w);
 u32      a3_world_entity_count(const A3World *w);
+/* Modules with per-world state (physics, particles) register a cleanup that
+ * runs whenever any world is destroyed. */
+typedef void (*A3WorldDestroyFn)(A3World *w);
+void     a3_world_on_destroy(A3WorldDestroyFn fn);
 /* Deep copy (used to enter Play mode without touching the edited scene). */
 A3World *a3_world_clone(const A3World *src, const char *name);
 

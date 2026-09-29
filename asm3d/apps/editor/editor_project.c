@@ -14,6 +14,7 @@
 #include "../../engine/scene/a3_scene_io.h"
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
+#include "../../engine/particles/a3_particles.h"
 #include "../../engine/core/a3_log.h"
 #include "../../engine/core/a3_string.h"
 #include "../../engine/core/a3_format.h"
@@ -99,6 +100,26 @@ static A3Entity tp_sound(A3World *w, const char *name, A3Vec3 pos, i32 builtin, 
     return e;
 }
 
+static A3Entity tp_effect(A3World *w, const char *name, A3Vec3 pos, u32 preset) {
+    A3Entity e = a3_entity_create(w, name);
+    ((A3CTransform *)a3_component_add(w, e, A3_T_TRANSFORM))->position = pos;
+    A3CParticleEmitter *em = (A3CParticleEmitter *)a3_component_add(w, e, A3_T_PARTICLE_EMITTER);
+    a3_particles_preset(em, preset);
+    return e;
+}
+
+/* A campfire: logs, fire, smoke, warm light and a crackle-free hum of wind. */
+static void tp_campfire(A3World *w, A3Vec3 at) {
+    const A3Vec4 bark = a3_v4(0.35f, 0.22f, 0.12f, 1);
+    for (int i = 0; i < 3; ++i) {
+        A3Entity log = tp_shape(w, "Log", A3_PRIM_CYLINDER, a3_v3(at.x, at.y + 0.12f, at.z), a3_v3(0.18f, 0.9f, 0.18f), bark, 0, 0);
+        ((A3CTransform *)a3_component_get(w, log, A3_T_TRANSFORM))->rotation = a3_quat_euler(80 * A3_DEG2RAD, (f32)i * 60 * A3_DEG2RAD, 0);
+    }
+    tp_effect(w, "Fire", a3_v3(at.x, at.y + 0.2f, at.z), A3_PARTICLES_FIRE);
+    tp_effect(w, "Smoke", a3_v3(at.x, at.y + 1.0f, at.z), A3_PARTICLES_SMOKE);
+    tp_light(w, "Fire Light", A3_LIGHT_POINT, a3_v3(at.x, at.y + 0.9f, at.z), a3_v4(1, 0.55f, 0.2f, 1), 2.5f, 8);
+}
+
 static A3Entity tp_camera(A3World *w, A3Vec3 pos, f32 pitch_deg, f32 yaw_deg) {
     A3Entity cam = a3_entity_create(w, "Main Camera");
     A3CTransform *t = (A3CTransform *)a3_component_add(w, cam, A3_T_TRANSFORM);
@@ -153,6 +174,7 @@ void ed_build_template_scene(A3World *w, i32 tpl) {
         tp_shape(w, "Wall", A3_PRIM_CUBE, a3_v3(0, 1.5f, -18), a3_v3(20, 3, 1), stone, 1, 0);
         tp_player(w, a3_v3(0, 0, 4), A3_CAM_FIRST_PERSON, 0);
         tp_light(w, "Lamp", A3_LIGHT_POINT, a3_v3(0, 2.5f, -10), a3_v4(1, 0.75f, 0.45f, 1), 1.5f, 10);
+        tp_campfire(w, a3_v3(-2.5f, 0, -1));
     } break;
     case 2: /* Third person */
         tp_sun(w, -50, 40, a3_v4(1, 0.96f, 0.88f, 1), 1.0f);
@@ -204,6 +226,7 @@ void ed_build_template_scene(A3World *w, i32 tpl) {
         }
         tp_light(w, "Flickering Bulb", A3_LIGHT_POINT, a3_v3(0, 2.6f, -14), a3_v4(1, 0.6f, 0.3f, 1), 0.8f, 6);
         tp_sound(w, "Wind", a3_v3_zero(), A3_SOUND_WIND, 0.35f, 0, A3_ENTITY_NULL);
+        tp_effect(w, "Dust", a3_v3(0, 1.5f, -12), A3_PARTICLES_DUST);
         {
             A3Entity pl = tp_player(w, a3_v3(0, 0, 2), A3_CAM_FIRST_PERSON, 0);
             A3Entity cam = a3_entity_first_child(w, pl);

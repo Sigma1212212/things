@@ -13,6 +13,7 @@
 #include "../core/a3_hash.h"
 #include "../core/a3_json.h"
 #include "../resource/a3_assets.h"
+#include "../particles/a3_particles.h"
 #include "../scene/a3_components.h"
 #include "../platform/a3_platform.h"
 
@@ -61,7 +62,12 @@ typedef struct Renderable {
 struct A3Renderer {
     A3RenderSettings settings;
     A3RenderFrameInfo info;
-    A3RhiShader lit, shadow, sky, tonemap, fxaa, lines, grid;
+    A3RhiShader lit, shadow, sky, tonemap, fxaa, lines, grid, particle;
+    /* particles */
+    A3RhiBuffer particle_quad_vb, particle_quad_ib, particle_buf;
+    usize particle_buf_size;
+    A3RhiMesh particle_mesh;
+    A3VertexLayout particle_layout;
     A3RhiBuffer instance_buf;
     A3VertexLayout instance_layout;
     /* HDR chain */
@@ -140,6 +146,7 @@ A3Renderer *a3_renderer_create(void) {
     r->fxaa = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_FXAA_FS, "fxaa");
     r->lines = make_shader(A3_SHADER_LINES_VS, A3_SHADER_LINES_FS, "lines");
     r->grid = make_shader(A3_SHADER_GRID_VS, A3_SHADER_GRID_FS, "grid");
+    r->particle = make_shader(A3_SHADER_PARTICLE_VS, A3_SHADER_PARTICLE_FS, "particle");
     r->instance_buf = a3_rhi_buffer_create(A3_BUFFER_VERTEX, sizeof(InstanceData) * 1024, 0, 1);
     A3VertexLayout *il = &r->instance_layout;
     il->stride = sizeof(InstanceData);
@@ -167,6 +174,23 @@ A3Renderer *a3_renderer_create(void) {
     gl.attribs[0] = (A3VertexAttrib){ 0, 3, A3_ATTR_FLOAT, 0, 0 };
     gl.count = 1;
     r->grid_mesh = a3_rhi_mesh_create(r->grid_vb, &gl, r->grid_ib, 1);
+    /* particle billboard quad: position (loc 0) + uv (loc 2); instances: pos+size (loc 4), color (loc 8) */
+    f32 qv[] = { -0.5f, -0.5f, 0, 0, 0, 0.5f, -0.5f, 0, 1, 0, 0.5f, 0.5f, 0, 1, 1, -0.5f, 0.5f, 0, 0, 1 };
+    u32 qi[] = { 0, 1, 2, 0, 2, 3 };
+    r->particle_quad_vb = a3_rhi_buffer_create(A3_BUFFER_VERTEX, sizeof(qv), qv, 0);
+    r->particle_quad_ib = a3_rhi_buffer_create(A3_BUFFER_INDEX, sizeof(qi), qi, 0);
+    A3VertexLayout ql;
+    a3_zero_struct(&ql);
+    ql.stride = 20;
+    ql.attribs[0] = (A3VertexAttrib){ 0, 3, A3_ATTR_FLOAT, 0, 0 };
+    ql.attribs[1] = (A3VertexAttrib){ 2, 2, A3_ATTR_FLOAT, 12, 0 };
+    ql.count = 2;
+    r->particle_mesh = a3_rhi_mesh_create(r->particle_quad_vb, &ql, r->particle_quad_ib, 1);
+    a3_zero_struct(&r->particle_layout);
+    r->particle_layout.stride = sizeof(A3ParticleInstance);
+    r->particle_layout.attribs[0] = (A3VertexAttrib){ 4, 4, A3_ATTR_FLOAT, 0, 1 };
+    r->particle_layout.attribs[1] = (A3VertexAttrib){ 8, 4, A3_ATTR_FLOAT, 16, 1 };
+    r->particle_layout.count = 2;
     a3_hashmap_init(&r->entity_materials, 64, A3_MEM_RENDER);
     a3_hashmap_init(&r->path_materials, 32, A3_MEM_RENDER);
     a3_rhi_set_int(r->tonemap, "u_hdr", 0);
@@ -196,11 +220,15 @@ void a3_renderer_destroy(A3Renderer *r) {
     destroy_targets(r);
     if (r->shadow_target.id) a3_rhi_target_destroy(r->shadow_target);
     if (r->shadow_tex.id) a3_rhi_texture_destroy(r->shadow_tex);
-    A3RhiShader shaders[] = { r->lit, r->shadow, r->sky, r->tonemap, r->fxaa, r->lines, r->grid };
+    A3RhiShader shaders[] = { r->lit, r->shadow, r->sky, r->tonemap, r->fxaa, r->lines, r->grid, r->particle };
     for (u32 i = 0; i < A3_ARRAY_COUNT(shaders); ++i) a3_rhi_shader_destroy(shaders[i]);
     for (u32 i = 0; i < MAX_MATERIALS; ++i) if (r->materials[i].used) a3_rhi_shader_destroy(r->materials[i].shader);
     a3_rhi_mesh_destroy(r->debug_mesh);
     a3_rhi_mesh_destroy(r->grid_mesh);
+    a3_rhi_mesh_destroy(r->particle_mesh);
+    a3_rhi_buffer_destroy(r->particle_quad_vb);
+    a3_rhi_buffer_destroy(r->particle_quad_ib);
+    if (r->particle_buf.id) a3_rhi_buffer_destroy(r->particle_buf);
     a3_rhi_buffer_destroy(r->debug_buf);
     a3_rhi_buffer_destroy(r->grid_vb);
     a3_rhi_buffer_destroy(r->grid_ib);
@@ -614,6 +642,38 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
         if (!m || !m->gpu.id) continue;
         a3_rhi_mesh_set_instances(m->gpu, r->instance_buf, &r->instance_layout, sizeof(InstanceData) * bt->first);
         a3_rhi_draw(m->gpu, A3_PRIM_TRIANGLES, 0, m->index_count, bt->count);
+    }
+
+    /* ---- particles (after opaque geometry; depth tested, no depth writes) ---- */
+    {
+        A3ParticleBatch pb[128];
+        const A3ParticleInstance *pinst = 0;
+        u32 pcount = 0;
+        u32 npb = a3_particles_collect(w, v->camera_pos, pb, A3_ARRAY_COUNT(pb), &pinst, &pcount);
+        if (npb && pcount && r->particle.id) {
+            usize bytes = sizeof(A3ParticleInstance) * pcount;
+            if (bytes > r->particle_buf_size) {
+                if (r->particle_buf.id) a3_rhi_buffer_destroy(r->particle_buf);
+                r->particle_buf_size = bytes * 2;
+                r->particle_buf = a3_rhi_buffer_create(A3_BUFFER_VERTEX, r->particle_buf_size, 0, 1);
+            }
+            a3_rhi_buffer_update(r->particle_buf, 0, bytes, pinst);
+            a3_rhi_shader_bind(r->particle);
+            a3_rhi_set_mat4(r->particle, "u_view_proj", &view_proj);
+            /* camera axes are the rows of the view matrix */
+            a3_rhi_set_vec3(r->particle, "u_cam_right", a3_v3(v->view.m[0], v->view.m[4], v->view.m[8]));
+            a3_rhi_set_vec3(r->particle, "u_cam_up", a3_v3(v->view.m[1], v->view.m[5], v->view.m[9]));
+            a3_rhi_set_int(r->particle, "u_tex", 0);
+            for (u32 i = 0; i < npb; ++i) {
+                A3RenderState st = { pb[i].blend == A3_PARTICLE_ALPHA ? A3_BLEND_ALPHA : A3_BLEND_ADDITIVE, A3_CULL_NONE, A3_DEPTH_LESS_NOWRITE, 0, 0, { 0 }, 0 };
+                a3_rhi_set_state(&st);
+                a3_rhi_set_int(r->particle, "u_has_texture", pb[i].texture ? 1 : 0);
+                a3_rhi_bind_texture(0, pb[i].texture ? a3_assets_texture_rhi(pb[i].texture) : a3_assets_white_texture());
+                a3_rhi_mesh_set_instances(r->particle_mesh, r->particle_buf, &r->particle_layout, sizeof(A3ParticleInstance) * pb[i].first);
+                a3_rhi_draw(r->particle_mesh, A3_PRIM_TRIANGLES, 0, 6, pb[i].count);
+            }
+            r->info.particles = pcount;
+        } else r->info.particles = 0;
     }
 
     /* ---- editor grid + debug lines ---- */

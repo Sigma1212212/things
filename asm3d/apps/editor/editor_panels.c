@@ -8,6 +8,7 @@
 #include "editor.h"
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
+#include "../../engine/particles/a3_particles.h"
 #include "../../engine/resource/a3_assets.h"
 #include "../../engine/scene/a3_scene_io.h"
 #include "../../engine/core/a3_log.h"
@@ -30,6 +31,7 @@ static u32 entity_icon(A3World *w, A3Entity e, u32 *color, A3Ui *ui) {
     if (l) { *color = col(ui, A3_UIC_WARNING); return l->type == A3_LIGHT_DIRECTIONAL ? A3_ICON_SUN : A3_ICON_LIGHT; }
     if (a3_component_has(w, e, A3_T_CHARACTER)) { *color = col(ui, A3_UIC_SUCCESS); return A3_ICON_HEART; }
     if (a3_component_has(w, e, A3_T_RIGIDBODY)) return A3_ICON_BOX;
+    if (a3_component_has(w, e, A3_T_PARTICLE_EMITTER)) { *color = col(ui, A3_UIC_WARNING); return A3_ICON_STAR; }
     if (a3_component_has(w, e, A3_T_AUDIO_SOURCE) && !a3_component_has(w, e, A3_T_MESH_RENDERER)) { *color = col(ui, A3_UIC_ACCENT); return A3_ICON_MUSIC; }
     if (a3_component_has(w, e, A3_T_MESH_RENDERER)) return A3_ICON_CUBE;
     if (a3_component_has(w, e, A3_T_WORLD_SETTINGS)) return A3_ICON_CLOUD;
@@ -411,6 +413,22 @@ void ed_inspector_panel(void *user, A3Ui *ui, A3Rect r) {
                 ed_draw_field(ed, ui, f, data, t->name);
             }
             if (hidden_adv) a3_ui_label_colored(ui, col(ui, A3_UIC_TEXT_DISABLED), "%u advanced settings hidden (switch to Advanced Mode)", hidden_adv);
+            if (id == A3_T_PARTICLE_EMITTER) {
+                if (a3_ui_button_ex(ui, "Restart", 90, A3_BUTTON_SMALL)) a3_particles_restart(w, e);
+                a3_ui_tooltip(ui, "Replay the effect from the beginning (bursts, timed effects)");
+                a3_ui_same_line(ui);
+                if (a3_ui_button_ex(ui, "Presets...", 100, A3_BUTTON_SMALL)) a3_ui_open_popup(ui, "fx_presets");
+                if (a3_ui_begin_popup(ui, "fx_presets", 180)) {
+                    for (u32 p = 0; p < A3_PARTICLES_PRESET_COUNT; ++p)
+                        if (a3_ui_menu_item(ui, a3_particle_preset_names[p], 0, 1)) {
+                            a3_particles_preset((A3CParticleEmitter *)data, p);
+                            a3_particles_restart(w, e);
+                            ed_undo_mark_changed(ed, "Particle Preset");
+                        }
+                    a3_ui_end_popup(ui);
+                }
+                a3_ui_label_colored(ui, col(ui, A3_UIC_TEXT_DIM), "%u particles alive", a3_particles_count(w));
+            }
             if (id == A3_T_AUDIO_SOURCE) {
                 if (a3_ui_button_ex(ui, "\xE2\x96\xB6 Preview Sound", 0, A3_BUTTON_SMALL)) {
                     if (!a3_audio_preview_source((A3CAudioSource *)data)) a3_ui_notify(ui, col(ui, A3_UIC_WARNING), "No sound selected (pick a Built-in Sound or a .wav Clip)");
@@ -753,6 +771,7 @@ void ed_profiler_panel(void *user, A3Ui *ui, A3Rect r) {
         a3_ui_property(ui, "Draw calls", 0); a3_ui_label(ui, "%u", rs->draw_calls);
         a3_ui_property(ui, "Triangles", 0); a3_ui_label(ui, "%u", rs->triangles);
         a3_ui_property(ui, "Lights", 0); a3_ui_label(ui, "%u (%u shadow casters)", fi->lights, fi->shadow_casters);
+        a3_ui_property(ui, "Particles", "Live particles drawn this frame (SSE assembly simulation)"); a3_ui_label(ui, "%u", fi->particles);
         a3_ui_property(ui, "UI vertices", 0); a3_ui_label(ui, "%u", a3_ui_vertex_count(ui));
     }
     if (a3_ui_collapsing_header(ui, "prof_sys", "Systems (last frame)", A3_ICON_BOLT, 1)) {
