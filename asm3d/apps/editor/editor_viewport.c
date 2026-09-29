@@ -500,7 +500,7 @@ void ed_viewport_shutdown(A3Editor *ed) {
 /* ======================================================================== */
 
 static void icon_overlays(A3Editor *ed, A3Ui *ui, const A3Mat4 *vp) {
-    if (!ed->show_icons) return;
+    if (!ed->show_icons || ed->mode == ED_PLAY) return;   /* playing: show the game as it looks */
     A3World *w = ed_active_world(ed);
     A3UiTheme *th = a3_ui_theme(ui);
     a3_ui_push_clip(ui, ed->vp_rect);

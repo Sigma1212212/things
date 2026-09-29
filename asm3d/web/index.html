@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASM3D Editor (browser)</title>
+<style>
+  :root { --bg: #14121c; --bar: #1d1a28; --line: #2e2a3d; --text: #e6e3f0; --dim: #9a94b0; --accent: #ff4fa3; --accent2: #3fe0e8; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  #bar { height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  #logo { font-weight: 700; letter-spacing: 0.04em; margin-right: 8px; }
+  #logo span { color: var(--accent); }
+  button, select, label.btn { background: #2a2639; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
+  button:hover, label.btn:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #1a0b14; border-color: var(--accent); font-weight: 600; }
+  #status { color: var(--dim); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #stage { position: absolute; top: 40px; left: 0; right: 0; bottom: 0; }
+  canvas { width: 100%; height: 100%; display: block; outline: none; }
+  #overlay { position: absolute; inset: 40px 0 0 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; background: var(--bg); }
+  #overlay h1 { margin: 0; font-size: 22px; }
+  #overlay p { margin: 0; color: var(--dim); max-width: 560px; text-align: center; }
+  #overlay.hidden { display: none; }
+  .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <div id="logo">ASM<span>3D</span> Editor</div>
+  <button id="sample" class="primary" title="Copy the Neon Tide open-world game into your browser projects and open it">Open Neon Tide sample</button>
+  <label class="btn" title="Open a project from a .zip file">Open .zip<input id="zip" type="file" accept=".zip"></label>
+  <label class="btn" title="Open a project folder from your disk">Open folder<input id="folder" type="file" webkitdirectory multiple></label>
+  <div class="sep"></div>
+  <select id="projects" title="Projects stored in this browser"></select>
+  <button id="download" title="Download the selected project as a .zip">Download .zip</button>
+  <button id="reload" title="Restart the editor with the selected project">Open</button>
+  <button id="wipe" title="Delete every project stored in this browser">Reset storage</button>
+  <div id="status">Loading...</div>
+</div>
+<div id="stage"><canvas id="canvas"></canvas></div>
+<div id="overlay"><h1>ASM3D</h1><p id="msg">Loading the editor...</p></div>
+<script type="module">
+import { startEditor, zipFiles, unzipFiles } from './asm3d.js';
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const status = (s) => { $('status').textContent = s; if (s) $('msg').textContent = s; };
+const SAMPLE = ['project.a3proj', 'Assets/Scenes/Main.a3scene', 'Assets/Scenes/Trailer.a3scene',
+                'Assets/Scripts/Game.a3script', 'Assets/Scripts/Director.a3script'];
+const logs = [];
+window.asm3dLogs = logs;
+
+function projectList(fs) {
+  const l = fs.list('/user/projects') || [];
+  return l.filter(([, e]) => e.dir).map(([n]) => n);
+}
+
+function refreshProjects(fs, current) {
+  const sel = $('projects');
+  sel.innerHTML = '';
+  for (const n of projectList(fs)) {
+    const o = document.createElement('option');
+    o.value = '/user/projects/' + n;
+    o.textContent = n;
+    if (o.value === current) o.selected = true;
+    sel.appendChild(o);
+  }
+  if (!sel.options.length) { const o = document.createElement('option'); o.textContent = '(no projects yet)'; o.value = ''; sel.appendChild(o); }
+}
+
+function openProject(path) {
+  const u = new URL(location.href);
+  if (path) u.searchParams.set('project', path); else u.searchParams.delete('project');
+  location.href = u.toString();
+}
+
+function uniqueName(fs, base) {
+  base = base.replace(/[^A-Za-z0-9_-]/g, '') || 'Project';   // no spaces: paths go on the command line
+  let name = base, i = 2;
+  while (fs.exists('/user/projects/' + name)) name = base + i++;
+  return name;
+}
+
+async function main() {
+  let args = params.get('args') || '';
+  let project = params.get('project');
+  const files = {};
+  if (params.get('sample')) {          // ?sample=1 opens Neon Tide directly
+    status('Downloading Neon Tide...');
+    for (const f of SAMPLE) {
+      const r = await fetch('samples/NeonTide/' + f);
+      if (r.ok) files['/user/projects/NeonTide/' + f] = new Uint8Array(await r.arrayBuffer());
+    }
+    project = '/user/projects/NeonTide';
+  }
+  if (project) args += ' --project ' + project;
+  let editor;
+  try {
+    editor = await startEditor({
+      canvas: $('canvas'), status, args: args.trim(), files,
+      persist: params.get('persist') !== '0',
+      log: (lvl, s) => { logs.push([lvl, s]); (lvl >= 4 ? console.error : lvl === 3 ? console.warn : console.log)(s); },
+    });
+  } catch (e) {
+    status('Error: ' + e.message);
+    $('msg').textContent = e.message + (e.message.includes('WebGL2') ? ' Try a current Chrome, Edge or Firefox.' : '');
+    window.asm3dError = e.message;
+    return;
+  }
+  window.asm3d = editor;
+  $('overlay').classList.add('hidden');
+  const fs = editor.fs;
+  refreshProjects(fs, project);
+  status(editor.restored ? `${projectList(fs).length} project(s) in this browser` : 'Projects are saved in this browser');
+
+  $('sample').onclick = async () => {
+    const name = uniqueName(fs, 'NeonTide');
+    status('Copying Neon Tide...');
+    for (const f of SAMPLE) {
+      const r = await fetch('samples/NeonTide/' + f);
+      if (!r.ok) { status('Could not load the sample (' + f + ')'); return; }
+      fs.write(`/user/projects/${name}/${f}`, new Uint8Array(await r.arrayBuffer()));
+    }
+    editor.flush();
+    openProject(`/user/projects/${name}`);
+  };
+  $('zip').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const entries = await unzipFiles(await file.arrayBuffer());
+      // strip a common top folder
+      const tops = new Set(entries.map(([n]) => n.split('/')[0]));
+      const strip = tops.size === 1 && entries.every(([n]) => n.includes('/'));
+      const name = uniqueName(fs, file.name.replace(/\.zip$/i, ''));
+      for (const [n, d] of entries) fs.write(`/user/projects/${name}/${strip ? n.slice(n.indexOf('/') + 1) : n}`, d);
+      editor.flush();
+      openProject(`/user/projects/${name}`);
+    } catch (err) { status('Could not open the zip: ' + err.message); }
+  };
+  $('folder').onchange = async (e) => {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    const top = files[0].webkitRelativePath.split('/')[0];
+    const name = uniqueName(fs, top);
+    for (const f of files) fs.write(`/user/projects/${name}/${f.webkitRelativePath.slice(top.length + 1)}`, new Uint8Array(await f.arrayBuffer()));
+    editor.flush();
+    openProject(`/user/projects/${name}`);
+  };
+  $('download').onclick = () => {
+    const root = $('projects').value;
+    if (!root) return;
+    const entries = [];
+    for (const [p, f] of fs.files) if (p.startsWith(root + '/') && !p.includes('/.asm3d/')) entries.push([root.split('/').pop() + '/' + p.slice(root.length + 1), f.data]);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(zipFiles(entries));
+    a.download = root.split('/').pop() + '.zip';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  $('reload').onclick = () => openProject($('projects').value);
+  $('wipe').onclick = () => {
+    if (!confirm('Delete every project stored in this browser?')) return;
+    fs.remove('/user', true);
+    editor.flush();
+    setTimeout(() => openProject(''), 600);
+  };
+  setInterval(() => refreshProjects(fs, $('projects').value || project), 3000);
+}
+main();
+</script>
+</body>
+</html>

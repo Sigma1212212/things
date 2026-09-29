@@ -1175,7 +1175,7 @@ static b32 run_game(const Args *a, b32 render) {
         a3_engine_begin_frame(eng, &real_dt);
         a3_engine_simulate(eng, w, dt, 0, 0);
         /* rendering is slow without a GPU: only the last frames (or every frame when recording) */
-        b32 draw = render && (f >= frames - 3 || record || has_opt(a, "render-all"));
+        b32 draw = render && (f >= frames - 3 || (record && f >= record_from) || has_opt(a, "render-all"));
         if (draw) a3_engine_render_world(eng, w, 0);
         if (draw && record && f >= record_from) {
             a3_engine_render_hud(eng, w);
@@ -1187,7 +1187,7 @@ static b32 run_game(const Args *a, b32 render) {
         }
         char next[512];
         if (a3_scripts_take_scene_request(w, next, sizeof(next))) A3_WARN("cli", "load_scene(\"%s\") requested at frame %d (not followed by simulate)", next, f);
-        if (render && f == frames - 1) {
+        if (render && f == frames - 1 && (!record || opt(a, "out", 0))) {
             const char *eye = opt(a, "camera", 0), *look = opt(a, "look", 0);
             if (eye) {
                 A3Vec3 e3, l3 = a3_v3(0, 0, 0);

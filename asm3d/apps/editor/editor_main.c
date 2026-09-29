@@ -25,7 +25,6 @@
 #include "../../engine/core/a3_string.h"
 #include "../../engine/core/a3_format.h"
 #include "../../engine/platform/a3_platform.h"
-#include <stdlib.h>
 
 #define MENUBAR_H 28.0f
 #define TOOLBAR_H 40.0f
@@ -957,6 +956,7 @@ static int selftest_run(A3Editor *ed, const char *tmp) {
     ST_CHECK(ed_validate_project(ed, &report, &errors, &warnings));
     ST_CHECK(errors == 0);
     a3_strbuf_free(&report);
+#if !A3_PLATFORM_WEB   /* the browser editor cannot run compilers or write executables */
     ST_CHECK(ed_build(ed, 0));
     char exe[ED_PATH];
     a3_path_join(exe, sizeof(exe), ed->build_output, "data/project.a3proj");
@@ -971,6 +971,7 @@ static int selftest_run(A3Editor *ed, const char *tmp) {
         a3_path_join(game, sizeof(game), ed->build_output, gname);
         ST_CHECK(a3_file_exists(game));
     }
+#endif
     /* code editor round trip */
     i32 doc = ed_code_open(ed, "Assets/Scripts/selftest.txt");
     ST_CHECK(doc >= 0);
@@ -1019,7 +1020,32 @@ static int selftest(A3Editor *ed) {
 /* main                                                                     */
 /* ======================================================================== */
 
-int main(int argc, char **argv) {
+/* ---- program: start, one frame per tick, shutdown ----
+ * The desktop loops over editor_tick(); the browser build (web/asm3d.js)
+ * calls it once per animation frame. */
+typedef struct EdRun {
+    A3Engine *eng;
+    A3Editor *ed;
+    int frames;
+    const char *shot, *select, *mesh_ops;
+    b32 edit_mesh;
+    int rc;
+    b32 running;
+} EdRun;
+
+static EdRun g_run;
+static A3Editor g_editor;
+
+/* atoi without libc: leading integer of s, or fallback when there is none */
+static i64 a3_parse_int_or(const char *s, i64 fallback) {
+    usize n = 0;
+    if (s[n] == '-' || s[n] == '+') ++n;
+    while (a3_is_digit(s[n])) ++n;
+    i64 v;
+    return n && a3_parse_i64(s, n, &v) ? v : fallback;
+}
+
+static int editor_start(EdRun *run, int argc, char **argv) {
     const char *project = 0, *new_name = 0, *new_loc = 0, *layout = 0, *shot = 0, *select = 0, *show = 0, *open_file = 0, *mesh_ops = 0;
     b32 edit_mesh = 0;
     int frames = -1, width = 1600, height = 900, tpl = 0;
@@ -1031,15 +1057,15 @@ int main(int argc, char **argv) {
         if (a3_streq(a, "--project") && more) project = argv[++i];
         else if (a3_streq(a, "--new") && more) new_name = argv[++i];
         else if (a3_streq(a, "--location") && more) new_loc = argv[++i];
-        else if (a3_streq(a, "--template") && more) tpl = atoi(argv[++i]);
+        else if (a3_streq(a, "--template") && more) tpl = (int)a3_parse_int_or(argv[++i], 0);
         else if (a3_streq(a, "--layout") && more) layout = argv[++i];
-        else if (a3_streq(a, "--frames") && more) frames = atoi(argv[++i]);
+        else if (a3_streq(a, "--frames") && more) frames = (int)a3_parse_int_or(argv[++i], -1);
         else if (a3_streq(a, "--screenshot") && more) shot = argv[++i];
         else if (a3_streq(a, "--select") && more) select = argv[++i];
         else if (a3_streq(a, "--show") && more) show = argv[++i];
         else if (a3_streq(a, "--open") && more) open_file = argv[++i];
-        else if (a3_streq(a, "--play-at") && more) play_at = atoi(argv[++i]);
-        else if (a3_streq(a, "--shader-preset") && more) shader_preset = atoi(argv[++i]);
+        else if (a3_streq(a, "--play-at") && more) play_at = (i32)a3_parse_int_or(argv[++i], -1);
+        else if (a3_streq(a, "--shader-preset") && more) shader_preset = (i32)a3_parse_int_or(argv[++i], -1);
         else if (a3_streq(a, "--edit-mesh")) edit_mesh = 1;
         else if (a3_streq(a, "--mesh-ops") && more) { mesh_ops = argv[++i]; edit_mesh = 1; }
         else if (a3_streq(a, "--hidden")) hidden = 1;
@@ -1050,9 +1076,9 @@ int main(int argc, char **argv) {
         else if (a3_streq(a, "--build")) { build_only = 1; hidden = 1; }
         else if (a3_streq(a, "--size") && more) {
             const char *s = argv[++i];
-            width = atoi(s);
+            width = (int)a3_parse_int_or(s, width);
             const char *x = a3_strchr(s, 'x');
-            if (x) height = atoi(x + 1);
+            if (x) height = (int)a3_parse_int_or(x + 1, height);
         } else if (a3_streq(a, "--help")) {
             static const char usage[] =
                 "usage: asm3d_editor [--project DIR] [--new NAME --location DIR --template N] [--layout NAME]\n"
@@ -1066,11 +1092,12 @@ int main(int argc, char **argv) {
     A3EngineDesc d = { "ASM3D Editor", width, height, 1, hidden, 1, "", 60 };
     A3Engine *eng = a3_engine_create(&d);
     if (!eng) { A3_FATAL("editor", "could not start: no OpenGL 3.3 capable display was found"); return 1; }
-    static A3Editor editor;
-    A3Editor *ed = &editor;
+    A3Editor *ed = &g_editor;
     ed->engine = eng;
     ed->ui = a3_ui_create();
     if (!ed->ui) { a3_engine_destroy(eng); return 1; }
+    run->eng = eng;
+    run->ed = ed;
     a3_ui_set_clipboard_fns(ed->ui, clip_set, clip_get, a3_engine_window(eng));
     ed->dark_theme = !light;
     ed_apply_theme(ed);
@@ -1093,74 +1120,88 @@ int main(int argc, char **argv) {
     ed_layout_preset(ed, ed->level == ED_LEVEL_BEGINNER ? "Beginner" : "Default");
     ed_shader_init(ed);
     ed_recent_load(ed);
-    int rc = 0;
-    if (run_selftest) {
-        rc = selftest(ed);
-    } else {
-        if (new_name) {
-            char loc[ED_PATH];
-            a3_strcpy(loc, sizeof(loc), new_loc ? new_loc : ed->new_location);
-            a3_dir_create(loc);
-            if (ed_project_create(ed, loc, new_name, tpl)) ed->show_welcome = 0;
-        } else if (project) {
-            ed_project_open(ed, project);
-        }
-        if (build_only) {
-            rc = ed->has_project && ed_build(ed, 0) ? 0 : 1;
-            if (rc) A3_ERROR("editor", "build failed:\n%s%s", ed->build_report, ed->build_log);
-            goto done;
-        }
-        if (layout) ed_layout_preset(ed, layout);
-        else if (ed->has_project && new_name) ed_layout_preset(ed, ed->level == ED_LEVEL_BEGINNER ? "Beginner" : "Default");
-        if (show) a3_dock_show(&ed->dock, show);
-        if (open_file && ed->has_project) {
-            if (a3_str_ends_with(open_file, ".a3shader")) { if (ed_shader_open(ed, open_file)) a3_dock_show(&ed->dock, "Shader Maker"); }
-            else { ed_code_open(ed, open_file); a3_dock_show(&ed->dock, "Code"); }
-        }
-        if (shader_preset >= 0 && ed->shader) ed_shader_preset(ed, shader_preset);
-        if (ed->show_welcome && frames < 0) ed_open_modal(ed, "welcome");
-        ed->show_welcome = 0;
-        f32 dt;
-        for (;;) {
-            b32 alive = a3_engine_begin_frame(eng, &dt);
-            if (!alive) {
-                if (ed->quit != 2 && ed->has_project && ed->dirty) {
-                    a3_window_cancel_close(a3_engine_window(eng));
-                    ed_open_modal(ed, "quit");
-                } else break;
-            }
-            if (ed->quit == 1) {
-                if (ed->has_project && ed->dirty) { ed->quit = 0; ed_open_modal(ed, "quit"); }
-                else ed->quit = 2;
-            }
-            if (frames >= 0) dt = 1.0f / 60.0f;
-            if (ed->frame == 2 && select && ed->world) {
-                A3Entity e = a3_entity_find_by_name(ed->world, select);
-                if (a3_entity_valid(ed->world, e)) { ed_select(ed, e); ed_focus_selected(ed); }
-                else A3_WARN("editor", "--select: no entity named '%s'", select);
-            }
-            if (ed->frame == 3 && edit_mesh && ed->world && ed_model_enter(ed) && mesh_ops) {
-                char buf[1024];
-                a3_strcpy(buf, sizeof(buf), mesh_ops);
-                for (char *tok = buf, *next; tok && *tok; tok = next) {
-                    next = (char *)a3_strchr(tok, ';');
-                    if (next) *next++ = 0;
-                    if (!ed_model_run(ed, tok)) A3_WARN("editor", "--mesh-ops: '%s' failed", tok);
-                }
-            }
-            if (ed->frame == ed->play_at_frame && ed->has_project) ed_play(ed);
-            editor_frame(ed, dt);
-            ed->frame++;
-            if (frames >= 0 && ed->frame >= frames) {
-                if (shot) a3_engine_screenshot(eng, shot);
-                a3_engine_end_frame(eng);
-                break;
-            }
-            a3_engine_end_frame(eng);
-            if (ed->quit == 2) break;
+    if (run_selftest) return selftest(ed);
+    if (new_name) {
+        char loc[ED_PATH];
+        a3_strcpy(loc, sizeof(loc), new_loc ? new_loc : ed->new_location);
+        a3_dir_create(loc);
+        if (ed_project_create(ed, loc, new_name, tpl)) ed->show_welcome = 0;
+    } else if (project) {
+        ed_project_open(ed, project);
+    }
+    if (build_only) {
+        int rc = ed->has_project && ed_build(ed, 0) ? 0 : 1;
+        if (rc) A3_ERROR("editor", "build failed:\n%s%s", ed->build_report, ed->build_log);
+        return rc;
+    }
+    if (layout) ed_layout_preset(ed, layout);
+    else if (ed->has_project && new_name) ed_layout_preset(ed, ed->level == ED_LEVEL_BEGINNER ? "Beginner" : "Default");
+    if (show) a3_dock_show(&ed->dock, show);
+    if (open_file && ed->has_project) {
+        if (a3_str_ends_with(open_file, ".a3shader")) { if (ed_shader_open(ed, open_file)) a3_dock_show(&ed->dock, "Shader Maker"); }
+        else { ed_code_open(ed, open_file); a3_dock_show(&ed->dock, "Code"); }
+    }
+    if (shader_preset >= 0 && ed->shader) ed_shader_preset(ed, shader_preset);
+    if (ed->show_welcome && frames < 0) ed_open_modal(ed, "welcome");
+    ed->show_welcome = 0;
+    run->frames = frames;
+    run->shot = shot;
+    run->select = select;
+    run->mesh_ops = mesh_ops;
+    run->edit_mesh = edit_mesh;
+    run->running = 1;
+    return -1;   /* keep running: call editor_tick() every frame */
+}
+
+/* One editor frame. Returns false when the editor should shut down. */
+static b32 editor_tick(EdRun *run) {
+    A3Editor *ed = run->ed;
+    A3Engine *eng = run->eng;
+    if (!run->running) return 0;
+    f32 dt;
+    b32 alive = a3_engine_begin_frame(eng, &dt);
+    if (!alive) {
+        if (ed->quit != 2 && ed->has_project && ed->dirty) {
+            a3_window_cancel_close(a3_engine_window(eng));
+            ed_open_modal(ed, "quit");
+        } else { run->running = 0; a3_engine_end_frame(eng); return 0; }
+    }
+    if (ed->quit == 1) {
+        if (ed->has_project && ed->dirty) { ed->quit = 0; ed_open_modal(ed, "quit"); }
+        else ed->quit = 2;
+    }
+    if (run->frames >= 0) dt = 1.0f / 60.0f;
+    if (ed->frame == 2 && run->select && ed->world) {
+        A3Entity e = a3_entity_find_by_name(ed->world, run->select);
+        if (a3_entity_valid(ed->world, e)) { ed_select(ed, e); ed_focus_selected(ed); }
+        else A3_WARN("editor", "--select: no entity named '%s'", run->select);
+    }
+    if (ed->frame == 3 && run->edit_mesh && ed->world && ed_model_enter(ed) && run->mesh_ops) {
+        char buf[1024];
+        a3_strcpy(buf, sizeof(buf), run->mesh_ops);
+        for (char *tok = buf, *next; tok && *tok; tok = next) {
+            next = (char *)a3_strchr(tok, ';');
+            if (next) *next++ = 0;
+            if (!ed_model_run(ed, tok)) A3_WARN("editor", "--mesh-ops: '%s' failed", tok);
         }
     }
-done:
+    if (ed->frame == ed->play_at_frame && ed->has_project) ed_play(ed);
+    editor_frame(ed, dt);
+    ed->frame++;
+    if (run->frames >= 0 && ed->frame >= run->frames) {
+        if (run->shot) a3_engine_screenshot(eng, run->shot);
+        a3_engine_end_frame(eng);
+        run->running = 0;
+        return 0;
+    }
+    a3_engine_end_frame(eng);
+    if (ed->quit == 2) { run->running = 0; return 0; }
+    return 1;
+}
+
+static void editor_shutdown(EdRun *run) {
+    A3Editor *ed = run->ed;
+    if (!ed) return;
     ed_project_close(ed);
     ed_viewport_shutdown(ed);
     ed_shader_shutdown(ed);
@@ -1169,6 +1210,40 @@ done:
     ed_code_free(ed);
     ed_undo_free(&ed->undo);
     a3_ui_destroy(ed->ui);
-    a3_engine_destroy(eng);
+    a3_engine_destroy(run->eng);
+    run->ed = 0;
+}
+
+#if A3_PLATFORM_WEB
+/* Browser entry points (web/asm3d.js). `args` is a space-separated command line. */
+A3_WASM_EXPORT("a3_web_editor_start") int a3_web_editor_start(char *args) {
+    static char *argv[32];
+    int argc = 0;
+    argv[argc++] = (char *)"asm3d_editor";
+    for (char *p = args; p && *p && argc < 31;) {
+        while (*p == ' ') *p++ = 0;
+        if (!*p) break;
+        argv[argc++] = p;
+        while (*p && *p != ' ') ++p;
+    }
+    a3_zero_struct(&g_run);
+    int rc = editor_start(&g_run, argc, argv);
+    if (rc >= 0) { editor_shutdown(&g_run); return rc; }
+    return -1;
+}
+A3_WASM_EXPORT("a3_web_editor_frame") int a3_web_editor_frame(void) {
+    if (editor_tick(&g_run)) return 1;
+    editor_shutdown(&g_run);
+    return 0;
+}
+#else
+int main(int argc, char **argv) {
+    int rc = editor_start(&g_run, argc, argv);
+    if (rc < 0) {
+        while (editor_tick(&g_run)) {}
+        rc = 0;
+    }
+    editor_shutdown(&g_run);
     return rc;
 }
+#endif

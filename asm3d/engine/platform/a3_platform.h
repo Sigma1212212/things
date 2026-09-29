@@ -37,8 +37,8 @@ usize a3_os_page_size(void);
 u32  a3_cpu_count(void);
 
 /* ---- Files ----
- * Paths use '/' separators. On web, paths resolve against the mounted package
- * virtual file system (read only) and "save:/" maps to persistent browser
+ * Paths use '/' separators. On web, files live in a JS-side tree
+ * (web/a3fs.js) where /user is kept in persistent browser
  * storage. */
 typedef struct A3FileInfo {
     b32 exists;

@@ -402,7 +402,7 @@ void a3_city_apply_time(A3World *w, A3CityTime t) {
         ws->sky_horizon = a3_v4(1.0f, 0.5f, 0.32f, 1);
         ws->ground_color = a3_v4(0.3f, 0.2f, 0.2f, 1);
         ws->fog_color = a3_v4(0.95f, 0.55f, 0.45f, 1);
-        ws->fog_density = 0.0016f;
+        ws->fog_density = 0.001f;
         ws->fog_height_falloff = 0.015f;
         ws->ambient_intensity = 0.5f;
         ws->bloom_intensity = 0.6f;
@@ -452,7 +452,7 @@ b32 a3_city_generate(A3World *w, const A3CityDesc *desc, A3CityStats *stats, A3S
     a3_hashmap_init(&g.node_map, 1024, A3_MEM_WORLD);
     b32 prev_loading = w->loading;
     w->loading = 1;   /* no on_add side effects while building */
-    g.root = ent(&g, "Sol Harbor", A3_ENTITY_NULL, a3_v3_zero(), a3_v3_one(), 0);
+    g.root = ent(&g, "Sol Harbor (generated)", A3_ENTITY_NULL, a3_v3_zero(), a3_v3_one(), 0);
     g.g_land = ent(&g, "Land & Water", g.root, a3_v3_zero(), a3_v3_one(), 0);
     g.g_roads = ent(&g, "Roads", g.root, a3_v3_zero(), a3_v3_one(), 0);
     g.g_blocks = ent(&g, "Blocks", g.root, a3_v3_zero(), a3_v3_one(), 0);

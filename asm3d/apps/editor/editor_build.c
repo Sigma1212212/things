@@ -88,6 +88,12 @@ b32 ed_build(A3Editor *ed, b32 run_after) {
     if (!ed->has_project) return 0;
     if (ed->mode != ED_EDIT) ed_stop(ed);
     if (ed->dirty && !ed_scene_save(ed)) { blog(ed, "ERROR: the scene could not be saved"); return 0; }
+#if A3_PLATFORM_WEB
+    A3_UNUSED(run_after);
+    blog(ed, "ERROR: games cannot be built inside the browser (no compiler or executables here). "
+             "Use Download .zip above the editor, open the project in the desktop editor and build it there.");
+    return 0;
+#endif
     if (ed->build_target != 0) {
         blog(ed, "ERROR: only the Desktop target is available in this version (see docs/STATUS.md).");
         return 0;

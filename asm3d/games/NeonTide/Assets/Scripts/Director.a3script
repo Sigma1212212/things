@@ -1,0 +1,192 @@
+// Trailer director: a timeline of camera shots over Sol Harbor, with title
+// cards and fades. Used by Assets/Scenes/Trailer.a3scene and
+// tools/make_trailer.sh (which records every frame and encodes a video).
+
+let cam = nil
+let t0 = -1
+let hero = nil
+let cop = nil
+let cop_bar = nil
+let trail = []
+let trail_timer = 0
+let chase_pos = nil
+let shot = -1
+let lead = 2.0                 // seconds of city life before the first shot
+
+// shot start times (seconds); the last entry is the end
+let starts = [0, 7, 13, 20, 27, 34, 40, 47]
+
+fn on_start() {
+    cam = find("Main Camera")
+    city_time("sunset")
+}
+
+fn ease(x) {
+    let t = clamp(x, 0, 1)
+    return t * t * (3 - 2 * t)
+}
+
+fn place(pos, target) {
+    cam.position = pos
+    look_at(cam, target)
+}
+
+fn fade_alpha(t) {
+    // black fade around every cut
+    let a = 0
+    for s in starts {
+        let d = abs(t - s)
+        if d < 0.45 { a = max(a, 1 - d / 0.45) }
+    }
+    return a
+}
+
+fn title(text, sub, t, t_in, t_out, color) {
+    let a = clamp((t - t_in) / 0.6, 0, 1) * clamp((t_out - t) / 0.6, 0, 1)
+    if a <= 0 { return }
+    hud_text(text, 640, 560, 2.6, color, a, "center")
+    if sub != "" { hud_text(sub, 640, 628, 1.1, vec3(0.9, 0.9, 1), a * 0.9, "center") }
+}
+
+fn pick_hero() {
+    // a traffic car that is driving on a long straight, far from the start
+    let best = nil
+    let best_speed = 0
+    for c in find_all("Traffic Car") {
+        let s = c.Vehicle.speed
+        if s > best_speed {
+            best_speed = s
+            best = c
+        }
+    }
+    return best
+}
+
+fn start_chase() {
+    if hero == nil { return }
+    hero.Vehicle.max_speed = 40
+    let behind = hero.position - hero.forward * 16
+    cop = spawn_car("Police Car", behind, hero.rotation.y, vec3(0.05, 0.06, 0.09))
+    cop.Vehicle.ground_probe = false
+    cop.Vehicle.collide_world = false
+    cop.Vehicle.max_speed = 45
+    cop.Vehicle.acceleration = 16
+    cop_bar = clone(find("Lightbar Template"), behind)
+    cop_bar.parent = cop
+    cop_bar.local_position = vec3(0, 1.52, 0.3)
+    cop_bar.active = true
+    add_component(cop_bar, "Light")
+    cop_bar.Light.type = "Point"
+    cop_bar.Light.range = 14
+    cop_bar.Light.intensity = 7
+    trail = []
+}
+
+fn drive_cop(dt) {
+    if cop == nil or hero == nil { return }
+    // follow the hero's breadcrumbs ~14 m behind it
+    trail_timer -= dt
+    if trail_timer <= 0 {
+        push(trail, hero.position)
+        trail_timer = 0.1
+    }
+    while len(trail) > 1 and distance(trail[0], cop.position) < 6 { remove_at(trail, 0) }
+    let goal = hero.position
+    if len(trail) > 0 { goal = trail[0] }
+    let to = goal - cop.position
+    let side = dot(normalize(to), cop.right)
+    let ahead = dot(normalize(to), cop.forward)
+    let steer = clamp(side * 3, -1, 1)
+    if ahead < 0 { steer = sign(side + 0.001) }
+    cop.Vehicle.steer = steer
+    let gap = distance(hero.position, cop.position)
+    cop.Vehicle.throttle = clamp((gap - 12) * 0.25, -1, 1)
+    // siren colors
+    let on = floor(time() * 7) % 2 == 0
+    let col = on and vec3(1, 0.05, 0.05) or vec3(0.05, 0.25, 1)
+    cop_bar.MeshRenderer.base_color = col
+    cop_bar.Light.color = col
+}
+
+fn chase_camera(target, back, up, side, dt, look_ahead) {
+    let want = target.position - target.forward * back + vec3(0, up, 0) + target.right * side
+    if chase_pos == nil { chase_pos = want }
+    chase_pos = lerp(chase_pos, want, clamp(dt * 4, 0, 1))
+    place(chase_pos, target.position + target.forward * look_ahead + vec3(0, 1, 0))
+}
+
+fn on_update(dt) {
+    if t0 < 0 { t0 = time() }
+    let t = time() - t0 - lead
+    if t < 0 {
+        place(vec3(900, 120, 300), vec3(-150, 40, -200))
+        hud_rect(0, 0, 1280, 720, vec3(0, 0, 0), 1)
+        return
+    }
+    // which shot
+    let s = 0
+    for i in 0..len(starts) - 1 {
+        if t >= starts[i] { s = i }
+    }
+    let u = (t - starts[s]) / (starts[s + 1] - starts[s])
+    if s != shot {
+        shot = s
+        chase_pos = nil
+        if s == 1 { city_time("night") }
+        if s == 2 { hero = pick_hero() }
+        if s == 3 { start_chase() }
+    }
+    drive_cop(dt)
+
+    if s == 0 {
+        // sunset: from the ocean over the beach toward the downtown skyline
+        let p = lerp(vec3(980, 110, 380), vec3(560, 60, 40), ease(u))
+        place(p, lerp(vec3(200, 30, -120), vec3(-180, 70, -120), ease(u)))
+        title("SOL HARBOR", "a coastal city of neon, palms and trouble", t, 1.2, 6.6, vec3(1, 0.75, 0.4))
+    } else if s == 1 {
+        // night: low dolly up the beachfront drive, hotels and neon
+        let p = lerp(vec3(396, 2.2, 180), vec3(396, 3.2, 40), u)
+        place(p, p + vec3(-6, 0.5, -30))
+        title("NEON NIGHTS", "", t, starts[1] + 1, starts[2] - 0.3, vec3(1, 0.3, 0.75))
+    } else if s == 2 {
+        if hero != nil { chase_camera(hero, 9, 3, 0, dt, 8) }
+        title("EVERY STREET", "drive anything you can find", t, starts[2] + 1, starts[3] - 0.3, vec3(0.3, 0.95, 1))
+    } else if s == 3 {
+        // side tracking shot of the chase
+        if hero != nil and cop != nil {
+            let mid = (hero.position + cop.position) * 0.5
+            let want = mid + cop.right * 11 + vec3(0, 2.2, 0) + cop.forward * (4 - 10 * u)
+            if chase_pos == nil { chase_pos = want }
+            chase_pos = lerp(chase_pos, want, clamp(dt * 3, 0, 1))
+            place(chase_pos, mid + vec3(0, 0.8, 0))
+        }
+        title("ONE WRONG TURN", "and the whole city is looking for you", t, starts[3] + 1, starts[4] - 0.3, vec3(1, 0.25, 0.25))
+    } else if s == 4 {
+        // orbit around downtown at night
+        let a = radians(200 + 70 * u)
+        let c = vec3(-170, 60, 20)
+        place(c + vec3(cos(a) * 470, 170 - 50 * u, sin(a) * 470), c + vec3(0, 40, 0))
+        title("THE CITY NEVER SLEEPS", "", t, starts[4] + 1, starts[5] - 0.3, vec3(0.8, 0.6, 1))
+    } else if s == 5 {
+        // low over the bay, along the middle causeway toward the skyline
+        let p = lerp(vec3(275, 4, -18), vec3(135, 7, -26), ease(u))
+        place(p, vec3(-120, 30, -100))
+        title("CROSS THE BAY", "", t, starts[5] + 1, starts[6] - 0.3, vec3(0.4, 1, 0.8))
+    } else {
+        // title card over a slow aerial of the beach at night
+        let p = lerp(vec3(620, 80, 250), vec3(600, 95, 150), u)
+        place(p, vec3(380, 10, -150))
+        let a = clamp((t - starts[6]) / 1.0, 0, 1)
+        hud_rect(0, 0, 1280, 720, vec3(0.02, 0, 0.05), 0.55 * a)
+        hud_text("NEON TIDE", 640, 250, 5.2, vec3(1, 0.3, 0.72), a, "center")
+        hud_text("an open-world game made with the ASM3D engine", 640, 380, 1.2, vec3(0.8, 0.95, 1), a * 0.9, "center")
+        hud_text("real-time: SSAO, screen-space reflections, bloom, height fog, 1000+ lights", 640, 420, 0.85, vec3(0.7, 0.7, 0.85), a * 0.8, "center")
+        hud_text("COMING SOON", 640, 500, 1.6, vec3(0.3, 1, 1), clamp((t - starts[6] - 1.5) / 0.8, 0, 1), "center")
+    }
+    let f = fade_alpha(t)
+    if t > starts[len(starts) - 1] - 0.45 { f = max(f, clamp((t - (starts[len(starts) - 1] - 0.45)) / 0.45, 0, 1)) }
+    if f > 0 { hud_rect(0, 0, 1280, 720, vec3(0, 0, 0), f) }
+    // cinematic bars
+    hud_rect(0, 0, 1280, 52, vec3(0, 0, 0), 1)
+    hud_rect(0, 668, 1280, 52, vec3(0, 0, 0), 1)
+}

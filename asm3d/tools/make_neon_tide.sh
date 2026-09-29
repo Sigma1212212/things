@@ -44,3 +44,22 @@ q entity set $S "Lightbar Template" MeshRenderer.material builtin:neon MeshRende
 q entity add $S Game --script Assets/Scripts/Game.a3script
 q validate $G
 echo "Neon Tide scene written to $S"
+
+# ---- trailer scene: same city, busier streets, a scripted camera ----
+T=$G/Assets/Scenes/Trailer.a3scene
+rm -f $T
+q scene new $T --empty
+q entity add $T "World Settings" --with WorldSettings
+q entity add $T "Sun" --rotation -38,120,0 --with Light
+q entity set $T "Sun" Light.type Directional Light.cast_shadows true
+q entity add $T "Sol Harbor" --with City
+q entity set $T "Sol Harbor" City.seed 1 City.time Night
+q entity add $T "City Traffic" --with Traffic
+q entity set $T "City Traffic" Traffic.roads generated Traffic.cars 150 Traffic.pedestrians 260 Traffic.seed 5 Traffic.speed_limit 17
+q entity add $T "Main Camera" --at 900,120,300 --with Camera
+q entity set $T "Main Camera" Camera.primary true Camera.far_plane 3200 Camera.fov 55 Camera.near_plane 0.2
+q entity add $T "Lightbar Template" --scale 1.3,0.14,0.32 --primitive cube
+q entity set $T "Lightbar Template" MeshRenderer.material builtin:neon MeshRenderer.base_color 1,0.1,0.1,1 active false
+q entity add $T Director --script Assets/Scripts/Director.a3script
+q validate $G
+echo "Trailer scene written to $T"

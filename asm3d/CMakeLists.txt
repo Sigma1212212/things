@@ -158,6 +158,29 @@ if(ASM3D_BUILD_WASM AND NOT CMAKE_CROSSCOMPILING)
       COMMENT "Building WebAssembly test module"
       VERBATIM)
     add_custom_target(asm3d_tests_wasm ALL DEPENDS ${A3_WASM_TEST_OUT})
+    # The editor in the browser: the same editor code with the WebGL2 window
+    # layer (engine/platform/window_web.c). web/ holds the page and JS glue.
+    file(GLOB A3_WASM_RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/engine/runtime/*.c)
+    file(GLOB A3_WASM_EDITOR_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/apps/editor/*.c)
+    file(GLOB A3_WEB_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/web/*)
+    set(A3_WASM_EDITOR_ENGINE ${A3_CORE_SOURCES} ${CMAKE_SOURCE_DIR}/engine/core/a3_simd_wasm.c
+        ${A3_SHARED_SOURCES} ${CMAKE_SOURCE_DIR}/engine/platform/platform_web.c ${CMAKE_SOURCE_DIR}/engine/jobs/a3_jobs.c
+        ${CMAKE_SOURCE_DIR}/engine/platform/window_web.c ${CMAKE_SOURCE_DIR}/engine/render/rhi_gl.c ${CMAKE_SOURCE_DIR}/engine/render/a3_gl.c
+        ${A3_WASM_RUNTIME_SOURCES})
+    set(A3_WASM_EDITOR_OUT ${CMAKE_BINARY_DIR}/web/asm3d_editor.wasm)
+    string(REPLACE "stack-size=1048576" "stack-size=8388608" A3_WASM_EDITOR_LDFLAGS "${A3_WASM_LDFLAGS}")
+    string(REPLACE "initial-memory=4194304" "initial-memory=33554432" A3_WASM_EDITOR_LDFLAGS "${A3_WASM_EDITOR_LDFLAGS}")
+    add_custom_command(
+      OUTPUT ${A3_WASM_EDITOR_OUT}
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/web
+      COMMAND ${A3_CLANG} ${A3_WASM_CFLAGS} ${A3_WASM_EDITOR_LDFLAGS}
+              ${A3_WASM_EDITOR_ENGINE} ${A3_WASM_EDITOR_SOURCES} -o ${A3_WASM_EDITOR_OUT}
+      COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/web ${CMAKE_BINARY_DIR}/web
+      COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/games/NeonTide ${CMAKE_BINARY_DIR}/web/samples/NeonTide
+      DEPENDS ${A3_WASM_EDITOR_ENGINE} ${A3_WASM_EDITOR_SOURCES} ${A3_WEB_FILES}
+      COMMENT "Building the browser editor (web/asm3d_editor.wasm)"
+      VERBATIM)
+    add_custom_target(asm3d_editor_web ALL DEPENDS ${A3_WASM_EDITOR_OUT})
     find_program(A3_NODE node)
     if(A3_NODE)
       add_test(NAME wasm_tests COMMAND ${A3_NODE} ${CMAKE_SOURCE_DIR}/tools/run_wasm_tests.mjs ${A3_WASM_TEST_OUT})

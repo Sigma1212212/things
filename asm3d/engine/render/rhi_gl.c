@@ -348,6 +348,26 @@ u32 a3_rhi_texture_native(A3RhiTexture h) { return HANDLE_OK(textures, h, MAX_TE
 /* Shaders                                                                  */
 /* ======================================================================== */
 
+#if A3_PLATFORM_WEB
+/* WebGL2: GLSL ES 3.00. The engine's shaders are written to compile as both
+ * GLSL 3.30 core and GLSL ES 3.00 (explicit float literals, no implicit
+ * int-to-float conversions). */
+#define A3_ES_PRECISION "precision highp float;\nprecision highp int;\nprecision highp sampler2D;\nprecision highp sampler2DShadow;\n"
+static const char *PRELUDE_VS =
+    "#version 300 es\n"
+    A3_ES_PRECISION
+    "#define A3_GL 1\n"
+    "#define A3_GLES 1\n"
+    "#define A3_VERTEX 1\n"
+    "#line 1\n";
+static const char *PRELUDE_FS =
+    "#version 300 es\n"
+    A3_ES_PRECISION
+    "#define A3_GL 1\n"
+    "#define A3_GLES 1\n"
+    "#define A3_FRAGMENT 1\n"
+    "#line 1\n";
+#else
 static const char *PRELUDE_VS =
     "#version 330 core\n"
     "#define A3_GL 1\n"
@@ -359,6 +379,7 @@ static const char *PRELUDE_FS =
     "#define A3_FRAGMENT 1\n"
     "precision highp float;\n"
     "#line 1\n";
+#endif
 
 /* Parses driver logs into structured errors. Handles the common formats:
  *   Mesa:    0:12(5): error: ...

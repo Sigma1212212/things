@@ -69,7 +69,7 @@ static const BuiltinMaterial g_builtins[] = {
       "void a3_surface(inout A3Surface s) {\n"
       "    vec3 n = normalize(s.normal);\n"
       "    float night = a3_night();\n"
-      "    if (abs(n.y) > 0.6) { s.albedo = vec3(0.2); s.roughness = 0.9; s.emissive = vec3(1.0, 0.05, 0.02) * step(0.985, a3_h2(floor(s.world_pos.xz * 0.5))) * (2.0 + 20.0 * night); return; }\n"
+      "    if (abs(n.y) > 0.6) { s.albedo = vec3(0.2); s.roughness = 0.9; vec2 bc = fract(s.world_pos.xz * 0.25) - 0.5; s.emissive = vec3(1.0, 0.05, 0.02) * step(0.993, a3_h2(floor(s.world_pos.xz * 0.25))) * step(length(bc), 0.18) * (1.0 + 8.0 * night); return; }\n"
       "    vec3 t = normalize(cross(vec3(0.0, 1.0, 0.0), n));\n"
       "    float u = dot(s.world_pos, t), y = s.world_pos.y;\n"
       "    vec2 cell = vec2(floor(u / 1.6), floor(y / 3.8));\n"

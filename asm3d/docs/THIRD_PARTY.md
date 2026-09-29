@@ -24,3 +24,9 @@ Summary of the license terms:
 
 The full license text is at https://dejavu-fonts.github.io/License.html.
 "Bitstream Vera" is a trademark of Bitstream, Inc.
+
+## Offline tools (not part of the engine)
+
+`tools/make_trailer.sh` calls **ffmpeg** (installed separately, LGPL/GPL) to
+encode recorded frames into a video. ASM3D does not link, include or ship
+ffmpeg; any encoder that reads a PNG sequence works.

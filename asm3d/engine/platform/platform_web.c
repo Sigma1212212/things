@@ -2,9 +2,9 @@
  * ASM3D - platform_web.c
  * WebAssembly implementation of a3_platform.h.
  *
- * The JavaScript side (runtime/web/asm3d.js) provides a handful of imports in
- * the "a3" module. Everything else - memory management, the package virtual
- * file system, formatting - runs inside wasm linear memory.
+ * The JavaScript side (web/asm3d.js, or tools/run_wasm_tests.mjs under Node)
+ * provides a handful of imports in the "a3" and "fs" modules. Everything
+ * else - memory management, formatting - runs inside wasm linear memory.
  */
 #include "a3_platform.h"
 #include "../core/a3_string.h"
@@ -18,10 +18,14 @@ A3_WASM_IMPORT("a3", "log") void js_log(i32 level, const char *ptr, i32 len);
 A3_WASM_IMPORT("a3", "now_ms") f64 js_now_ms(void);
 A3_WASM_IMPORT("a3", "wall_clock") f64 js_wall_clock(void);
 A3_WASM_IMPORT("a3", "abort") void js_abort(const char *ptr, i32 len);
-A3_WASM_IMPORT("a3", "storage_write") i32 js_storage_write(const char *key, i32 key_len, const void *data, i32 len);
-A3_WASM_IMPORT("a3", "storage_size") i32 js_storage_size(const char *key, i32 key_len);
-A3_WASM_IMPORT("a3", "storage_read") i32 js_storage_read(const char *key, i32 key_len, void *dst, i32 cap);
-A3_WASM_IMPORT("a3", "storage_delete") void js_storage_delete(const char *key, i32 key_len);
+/* file system: a JS-side tree of files (web/asm3d.js keeps it in IndexedDB) */
+A3_WASM_IMPORT("fs", "stat") f64 js_fs_stat(const char *path, i32 len, f64 *mtime_ms);   /* size, -1 missing, -2 directory */
+A3_WASM_IMPORT("fs", "read") i32 js_fs_read(const char *path, i32 len, void *dst, i32 cap);
+A3_WASM_IMPORT("fs", "write") i32 js_fs_write(const char *path, i32 len, const void *data, i32 size);
+A3_WASM_IMPORT("fs", "remove") i32 js_fs_remove(const char *path, i32 len, i32 recursive);
+A3_WASM_IMPORT("fs", "rename") i32 js_fs_rename(const char *src, i32 slen, const char *dst, i32 dlen);
+A3_WASM_IMPORT("fs", "mkdir") i32 js_fs_mkdir(const char *path, i32 len);
+A3_WASM_IMPORT("fs", "list") i32 js_fs_list(const char *path, i32 len, char *dst, i32 cap);   /* "name\tsize\tis_dir\tmtime\n"..., returns bytes needed */
 
 extern u8 __heap_base;
 
@@ -122,60 +126,38 @@ void a3_os_free(void *ptr, usize size) {
 usize a3_os_page_size(void) { return WEB_PAGE; }
 u32 a3_cpu_count(void) { return 1; }
 
-/* ---- Virtual file system ----
- * The loader mounts package files into wasm memory (a3_web_mount_file).
- * Paths starting with "save:/" go to browser storage via the JS bridge. */
-typedef struct VfsFile {
-    char path[192];
-    u64 hash;
-    u8 *data;
-    usize size;
-} VfsFile;
+/* ---- File system ----
+ * Paths are absolute ("/user/projects/MyGame/project.a3proj"); relative
+ * paths are resolved against "/". Files live in a JS map; web/asm3d.js
+ * persists /user to IndexedDB and can mount project folders and zips. */
 
-static A3_ARRAY_TYPE(VfsFile) g_vfs;
+#define WEB_PATH_MAX 1024
+static i32 plen(const char *p) { return (i32)a3_strlen(p); }
 
-static VfsFile *vfs_find(const char *path) {
+static const char *norm(const char *path, char *buf, usize cap) {
     while (path[0] == '.' && path[1] == '/') path += 2;
-    u64 h = a3_hash_str(path);
-    for (u32 i = 0; i < g_vfs.count; ++i) if (g_vfs.data[i].hash == h && a3_streq(g_vfs.data[i].path, path)) return &g_vfs.data[i];
-    return 0;
+    if (path[0] == '/') return path;
+    if (path[0] == '.' && path[1] == 0) return "/";
+    a3_snprintf(buf, cap, "/%s", path);
+    return buf;
 }
 
 A3_WASM_EXPORT("a3_web_alloc") void *a3_web_alloc(u32 size) { return a3_malloc(size ? size : 1, A3_MEM_RESOURCE); }
 A3_WASM_EXPORT("a3_web_free") void a3_web_free(void *p) { a3_free(p); }
 
-/* Takes ownership of `data` (allocated with a3_web_alloc). */
-A3_WASM_EXPORT("a3_web_mount_file") i32 a3_web_mount_file(const char *path, u8 *data, u32 size) {
-    VfsFile *existing = vfs_find(path);
-    if (existing) { a3_free(existing->data); existing->data = data; existing->size = size; return 1; }
-    VfsFile f;
-    a3_zero_struct(&f);
-    a3_strcpy(f.path, sizeof(f.path), path);
-    f.hash = a3_hash_str(f.path);
-    f.data = data;
-    f.size = size;
-    return a3_array_push(g_vfs, f, A3_MEM_RESOURCE) ? 1 : 0;
-}
-
-static b32 is_save_path(const char *p) { return a3_str_starts_with(p, "save:/"); }
-
 b32 a3_file_info(const char *path, A3FileInfo *out) {
     a3_zero_struct(out);
-    if (!path) return 0;
-    if (is_save_path(path)) {
-        i32 n = js_storage_size(path, (i32)a3_strlen(path));
-        if (n < 0) return 0;
-        out->exists = 1; out->size = (u64)n;
-        return 1;
-    }
-    VfsFile *f = vfs_find(path);
-    if (f) { out->exists = 1; out->size = f->size; return 1; }
-    /* directories: any mounted file with this prefix */
-    usize l = a3_strlen(path);
-    for (u32 i = 0; i < g_vfs.count; ++i) {
-        if (a3_strncmp(g_vfs.data[i].path, path, l) == 0 && g_vfs.data[i].path[l] == '/') { out->exists = 1; out->is_dir = 1; return 1; }
-    }
-    return 0;
+    if (!path || !*path) return 0;
+    char b[WEB_PATH_MAX];
+    path = norm(path, b, sizeof(b));
+    f64 mt = 0;
+    f64 n = js_fs_stat(path, plen(path), &mt);
+    if (n == -1.0) return 0;
+    out->exists = 1;
+    out->is_dir = n == -2.0;
+    out->size = n >= 0 ? (u64)n : 0;
+    out->mtime_ns = (u64)(mt * 1000000.0);
+    return 1;
 }
 
 b32 a3_file_exists(const char *path) { A3FileInfo fi; return a3_file_info(path, &fi) && !fi.is_dir; }
@@ -184,31 +166,25 @@ b32 a3_dir_exists(const char *path) { A3FileInfo fi; return a3_file_info(path, &
 A3Result a3_file_read_all(const char *path, A3MemTag tag, A3FileData *out) {
     a3_zero_struct(out);
     if (!path) return A3_ERR_INVALID_ARG;
-    if (is_save_path(path)) {
-        i32 kl = (i32)a3_strlen(path);
-        i32 n = js_storage_size(path, kl);
-        if (n < 0) return A3_ERR_NOT_FOUND;
-        u8 *d = (u8 *)a3_malloc((usize)n + 1, tag);
-        if (!d) return A3_ERR_OUT_OF_MEMORY;
-        if (js_storage_read(path, kl, d, n) != n) { a3_free(d); return A3_ERR_IO; }
-        d[n] = 0;
-        out->data = d; out->size = (usize)n;
-        return A3_OK;
-    }
-    VfsFile *f = vfs_find(path);
-    if (!f) return A3_ERR_NOT_FOUND;
-    u8 *d = (u8 *)a3_malloc(f->size + 1, tag);
+    char b[WEB_PATH_MAX];
+    path = norm(path, b, sizeof(b));
+    f64 mt = 0;
+    f64 n = js_fs_stat(path, plen(path), &mt);
+    if (n < 0) return A3_ERR_NOT_FOUND;
+    u8 *d = (u8 *)a3_malloc((usize)n + 1, tag);
     if (!d) return A3_ERR_OUT_OF_MEMORY;
-    a3_memcpy(d, f->data, f->size);
-    d[f->size] = 0;
-    out->data = d; out->size = f->size;
+    if (js_fs_read(path, plen(path), d, (i32)n) != (i32)n) { a3_free(d); return A3_ERR_IO; }
+    d[(usize)n] = 0;
+    out->data = d;
+    out->size = (usize)n;
     return A3_OK;
 }
 
 A3Result a3_file_write_all(const char *path, const void *data, usize size) {
     if (!path) return A3_ERR_INVALID_ARG;
-    if (!is_save_path(path)) return A3_ERR_UNSUPPORTED; /* package is read only */
-    return js_storage_write(path, (i32)a3_strlen(path), data, (i32)size) ? A3_OK : A3_ERR_IO;
+    char b[WEB_PATH_MAX];
+    path = norm(path, b, sizeof(b));
+    return js_fs_write(path, plen(path), data, (i32)size) ? A3_OK : A3_ERR_IO;
 }
 
 A3Result a3_file_write_atomic(const char *path, const void *data, usize size) { return a3_file_write_all(path, data, size); }
@@ -223,36 +199,65 @@ A3Result a3_file_copy(const char *src, const char *dst) {
 }
 
 A3Result a3_file_move(const char *src, const char *dst) {
-    A3Result r = a3_file_copy(src, dst);
-    if (r == A3_OK) a3_file_delete(src);
-    return r;
+    char b1[WEB_PATH_MAX], b2[WEB_PATH_MAX];
+    src = norm(src, b1, sizeof(b1));
+    dst = norm(dst, b2, sizeof(b2));
+    return js_fs_rename(src, plen(src), dst, plen(dst)) ? A3_OK : A3_ERR_NOT_FOUND;
 }
 
 A3Result a3_file_delete(const char *path) {
-    if (!is_save_path(path)) return A3_ERR_UNSUPPORTED;
-    js_storage_delete(path, (i32)a3_strlen(path));
-    return A3_OK;
+    char b[WEB_PATH_MAX];
+    path = norm(path, b, sizeof(b));
+    return js_fs_remove(path, plen(path), 0) ? A3_OK : A3_ERR_NOT_FOUND;
 }
 
-A3Result a3_dir_create(const char *path) { A3_UNUSED(path); return A3_OK; }
-A3Result a3_dir_delete_recursive(const char *path) { A3_UNUSED(path); return A3_ERR_UNSUPPORTED; }
+A3Result a3_dir_create(const char *path) {
+    char b[WEB_PATH_MAX];
+    path = norm(path, b, sizeof(b));
+    return js_fs_mkdir(path, plen(path)) ? A3_OK : A3_ERR_IO;
+}
+
+A3Result a3_dir_delete_recursive(const char *path) {
+    char b[WEB_PATH_MAX];
+    path = norm(path, b, sizeof(b));
+    return js_fs_remove(path, plen(path), 1) ? A3_OK : A3_ERR_NOT_FOUND;
+}
 
 A3Result a3_dir_list(const char *path, A3DirVisitFn fn, void *user) {
-    usize l = a3_strlen(path);
-    b32 root = l == 0 || (l == 1 && path[0] == '.');
-    for (u32 i = 0; i < g_vfs.count; ++i) {
-        const char *p = g_vfs.data[i].path;
-        const char *rest;
-        if (root) rest = p;
-        else if (a3_strncmp(p, path, l) == 0 && p[l] == '/') rest = p + l + 1;
-        else continue;
-        if (a3_strchr(rest, '/')) continue; /* not a direct child (dirs not synthesized) */
-        A3DirEntry e;
-        a3_zero_struct(&e);
-        a3_strcpy(e.name, sizeof(e.name), rest);
-        e.size = g_vfs.data[i].size;
-        if (!fn(path, &e, user)) break;
+    char b[WEB_PATH_MAX];
+    const char *p = norm(path, b, sizeof(b));
+    i32 cap = 16384;
+    char *buf = 0;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        buf = (char *)a3_malloc((usize)cap + 1, A3_MEM_TEMP);
+        if (!buf) return A3_ERR_OUT_OF_MEMORY;
+        i32 need = js_fs_list(p, plen(p), buf, cap);
+        if (need < 0) { a3_free(buf); return A3_ERR_NOT_FOUND; }
+        if (need <= cap) { buf[need] = 0; break; }
+        a3_free(buf);
+        buf = 0;
+        cap = need + 1024;
     }
+    if (!buf) return A3_ERR_IO;
+    for (char *line = buf; *line;) {
+        char *eol = (char *)a3_strchr(line, '\n');
+        if (eol) *eol = 0;
+        char *f[4] = { line, 0, 0, 0 };
+        for (int k = 1; k < 4; ++k) { char *tab = f[k - 1] ? (char *)a3_strchr(f[k - 1], '\t') : 0; if (tab) { *tab = 0; f[k] = tab + 1; } }
+        if (f[0][0]) {
+            A3DirEntry e;
+            a3_zero_struct(&e);
+            a3_strcpy(e.name, sizeof(e.name), f[0]);
+            f64 v = 0;
+            if (f[1]) { a3_parse_f64(f[1], a3_strlen(f[1]), &v); e.size = (u64)v; }
+            e.is_dir = f[2] && f[2][0] == '1';
+            if (f[3]) { a3_parse_f64(f[3], a3_strlen(f[3]), &v); e.mtime_ns = (u64)(v * 1000000.0); }
+            if (!fn(path, &e, user)) break;
+        }
+        if (!eol) break;
+        line = eol + 1;
+    }
+    a3_free(buf);
     return A3_OK;
 }
 
@@ -260,9 +265,9 @@ A3FileWatch *a3_file_watch_create(const char *root, A3FileChangedFn fn, void *us
 void a3_file_watch_poll(A3FileWatch *w) { A3_UNUSED(w); }
 void a3_file_watch_destroy(A3FileWatch *w) { A3_UNUSED(w); }
 
-b32 a3_get_cwd(char *out, usize cap) { a3_strcpy(out, cap, "."); return 1; }
-b32 a3_get_exe_dir(char *out, usize cap) { a3_strcpy(out, cap, "."); return 1; }
-b32 a3_get_user_data_dir(char *out, usize cap) { a3_strcpy(out, cap, "save:"); return 1; }
+b32 a3_get_cwd(char *out, usize cap) { a3_strcpy(out, cap, "/"); return 1; }
+b32 a3_get_exe_dir(char *out, usize cap) { a3_strcpy(out, cap, "/app"); return 1; }
+b32 a3_get_user_data_dir(char *out, usize cap) { a3_strcpy(out, cap, "/user"); return 1; }
 
 /* ---- Threads: single-threaded web runtime ----
  * Wasm threads need SharedArrayBuffer + cross-origin isolation; the job
