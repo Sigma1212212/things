@@ -12,6 +12,9 @@
 #include "../platform/a3_platform.h"
 #include "../jobs/a3_jobs.h"
 #include "../audio/a3_audio.h"
+#include "../script/a3_script_engine.h"
+#include "../script/a3_script_hud.h"
+#include "../ui/a3_ui.h"
 
 #define MAX_SYSTEMS 128
 
@@ -32,6 +35,7 @@ struct A3Engine {
     f32 fixed_dt;
     b32 playing;
     const A3InputState *input_override; /* editor: game input only while the viewport has focus */
+    A3Ui *hud_ui;                        /* script HUD overlay (created on first use) */
 };
 
 static const A3InputState *game_input(A3Engine *e) { return e->input_override ? e->input_override : a3_window_input(e->window); }
@@ -107,6 +111,7 @@ A3Engine *a3_engine_create(const A3EngineDesc *desc) {
 void a3_engine_destroy(A3Engine *e) {
     if (!e) return;
     a3_audio_shutdown();
+    a3_ui_destroy(e->hud_ui);
     a3_renderer_destroy(e->renderer);
     a3_assets_shutdown();
     a3_rhi_shutdown();
@@ -218,6 +223,21 @@ void a3_engine_render_world(A3Engine *e, A3World *w, const A3RenderView *view) {
     }
     v.time = (f32)e->play_time;
     a3_renderer_draw_world(e->renderer, w, &v);
+    if (!view) a3_engine_render_hud(e, w);
+}
+
+void a3_engine_render_hud(A3Engine *e, A3World *w) {
+    const A3HudCmd *cmds;
+    if (!e || !w || !a3_scripts_hud(w, &cmds)) return;
+    if (!e->hud_ui && !(e->hud_ui = a3_ui_create())) return;
+    i32 ww, wh;
+    a3_window_size(e->window, &ww, &wh);
+    static const A3InputState no_input;
+    a3_ui_begin_frame(e->hud_ui, &no_input, ww, wh, 0);
+    a3_scripts_draw_hud(e->hud_ui, w, a3_rect(0, 0, (f32)ww, (f32)wh));
+    a3_ui_end_frame(e->hud_ui);
+    a3_rhi_target_bind((A3RhiTarget){ 0 }, ww, wh);
+    a3_ui_render(e->hud_ui);
 }
 
 void a3_engine_end_frame(A3Engine *e) {

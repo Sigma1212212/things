@@ -1,8 +1,7 @@
 # ASM3D Status
 
 This file says exactly what works today. If a feature is not listed under
-**Working**, it does not work yet. Last updated with the editor + Shader Maker
-milestone.
+**Working**, it does not work yet. Last updated with the scripting milestone.
 
 Legend: **Working** = implemented, used by the editor or games, and covered by
 tests or the editor self test. **Partial** = usable but with the limits
@@ -36,13 +35,14 @@ listed. **Planned** = not implemented yet.
 | Assets: OBJ meshes, textures, placeholders on failure, hot reload API | Working | glTF/FBX import is planned. |
 | Renderer: PBR forward, sun shadows, 16 local lights, sky, fog, ACES, FXAA, instancing, SIMD culling | Working | OpenGL 3.3 backend, plus a null backend for tests. |
 | Custom materials (`.a3shader`) | Working | Made with the Shader Maker, loaded by the renderer in the editor and in games. |
-| Physics: rigid bodies, box/sphere/capsule/mesh colliders, SAT contacts, warm starting, sleeping, triggers, raycasts | Working | Assembly kernels for integration, AABBs, sweep-and-prune, the solver and raycasts. |
+| Physics: rigid bodies, box/sphere/capsule/mesh colliders, SAT contacts, warm starting, sleeping, triggers, raycasts | Working | Assembly kernels for integration, AABBs, sweep-and-prune, the solver and raycasts. Character controllers are detected by trigger colliders (a sensor capsule that never collides or blocks rays). |
 | Character controller (walk, run, jump, stairs, slopes, 1st/3rd person camera) | Working | |
 | Audio: mixer, WAV, 3D sound, AudioSource/AudioListener | Working | SSE assembly mixing kernels (bit-exact C reference). Output via WASAPI on Windows and ALSA on Linux; silent if there is no device. 12 synthesized built-in sounds, plus automatic footsteps and jump sounds for the character. OGG/MP3 decoding is planned. |
 | Animation: keyframe clips, Animator, Motion, timeline editor | Working | Tracks animate any reflected field (transform, light, colors, custom components) with smooth, linear or step keys. |
 | Skeletal animation (bones, skinning, blending) | Planned | Needs glTF import. |
 | Particles: emitters, 10 presets, instanced billboards | Working | SSE assembly integration kernel (bit-exact C reference). Additive and alpha-sorted blending; previewed live in the editor. GPU simulation and collision are planned. |
-| Scripting language runtime | Planned | The code editor can already write and save `.a3script` files, but they are **not executed**. |
+| Scripting (A3Script) | Working | Bytecode compiler + stack VM (C). Script component with on_start / on_update / on_fixed_update / on_trigger_enter / on_trigger_exit / on_collision; any component field readable and writable by name; 97 built-in functions (math, vectors, lists, text, objects, input, physics, sound, particles, animation, HUD, scenes, saved values); hot reload that keeps variables; instruction budget against endless loops; plain-language errors with line numbers and "did you mean" suggestions. See docs/SCRIPTING.md. Not yet: dictionaries/maps, closures, classes, a debugger with breakpoints. |
+| Script HUD (text, rectangles, bars) | Working | Drawn over the game window and the editor viewport on a 1280 x 720 canvas. Text is a scaled bitmap font (large sizes look soft). |
 | Visual scripting | Planned | |
 | Terrain, world streaming, LOD, procedural generation | Planned | The Open World template uses plain props. |
 | AI navigation, vehicles, weather, water | Planned | The Racing template's car is a plain rigid body. |
@@ -62,7 +62,8 @@ listed. **Planned** = not implemented yet.
 | Play / Pause / Step in the editor (on a copy of the scene) | Working | |
 | Asset browser: thumbnails, drag and drop, move to trash | Working | |
 | Console, profiler (CPU, systems, physics, memory), docs, settings | Working | GPU timings are planned. |
-| Code editor: highlighting, find/replace, undo, JSON error markers | Working | |
+| Code editor: highlighting, find/replace, undo, error markers | Working | Scripts are checked while typing (marker + explanation on the line); saving reloads running objects. JSON files are checked on save. |
+| Script component tools | Working | "Create New Script" / "Edit Script" in the Inspector, the script's latest error shown in red, Script API reference in Docs (generated from the registered functions). |
 | Command palette (Ctrl+P) over commands, objects, assets and components | Working | |
 | Shader Maker: node graph, live preview, parameters, errors shown on nodes | Working | |
 | One-click desktop build (Windows or Linux, the OS the editor runs on) with project checks | Working | Debug/Release only change the folder name for now. |
@@ -72,16 +73,19 @@ listed. **Planned** = not implemented yet.
 ## Games
 
 Two complete example games are **planned**. The 10 templates are playable
-starting points, not finished games.
+starting points, not finished games. The Platformer template is scripted:
+collect 12 orbs, with a HUD counter, a timer and a best time saved between runs.
 
 ## How this is verified
 
-- `asm3d_tests`: 62 tests (unit, determinism golden hashes, physics
-  scenarios, shader graph, audio, particles, animation). They run natively and as WebAssembly
+- `asm3d_tests`: 70 tests (unit, determinism golden hashes, physics
+  scenarios, shader graph, audio, particles, animation, the scripting
+  language and its engine bindings). They run natively and as WebAssembly
   (`node tools/run_wasm_tests.mjs build/asm3d_tests.wasm`).
 - `asm3d_editor --selftest`: drives the real editor end to end. It creates a
   project, runs undo/redo, play/stop, save/reopen and a build, compiles every
-  Shader Maker preset on the GPU, and checks that shader errors are mapped to
-  the right node.
+  Shader Maker preset on the GPU, checks that shader errors are mapped to
+  the right node, runs a script in play mode (including hot reload and error
+  markers) and collects an orb in the scripted Platformer template (55 checks).
 - `asm3d_player --frames N --screenshot out.png` and
   `asm3d_editor --frames N --screenshot out.png` are used for visual checks.

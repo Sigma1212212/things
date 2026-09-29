@@ -63,6 +63,7 @@ typedef struct EdDocument {
     i32 error_lines[16];  /* 1-based */
     char error_msgs[16][160];
     u32 error_count;
+    f64 checked_edit_time;  /* last_edit_time that the live script check has seen */
 } EdDocument;
 
 typedef struct EdLogFilter { b32 info, warn, error; char text[64]; } EdLogFilter;
@@ -191,6 +192,7 @@ void ed_build_template_scene(A3World *w, i32 template_index);
 
 /* selection helpers (editor_main.c) */
 A3World *ed_active_world(A3Editor *ed);
+const char *ed_script_template(void);
 A3Entity ed_selected(A3Editor *ed);
 void ed_select(A3Editor *ed, A3Entity e);
 A3Entity ed_create_entity(A3Editor *ed, const char *name, A3Primitive prim, const char *component);

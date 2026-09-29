@@ -41,6 +41,7 @@ file(GLOB A3_SHARED_SOURCES CONFIGURE_DEPENDS
   engine/audio/*.c
   engine/particles/*.c
   engine/anim/*.c
+  engine/script/*.c
   engine/resource/*.c
   engine/ui/*.c
 )

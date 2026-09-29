@@ -10,6 +10,7 @@
 #include "../audio/a3_audio.h"
 #include "../particles/a3_particles.h"
 #include "../anim/a3_anim.h"
+#include "../script/a3_script_engine.h"
 #include "../scene/a3_components.h"
 #include "../platform/a3_window.h"
 #include "../core/a3_string.h"
@@ -100,6 +101,23 @@ static void sys_particles(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a
 
 static void sys_anim(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_anim_update(ctx->world, ctx->dt); }
 
+/* ---- scripts (play mode only) ---- */
+
+static void sys_scripts(A3SystemContext *ctx, void *user) {
+    A3_UNUSED(user);
+    A3ScriptFrame f;
+    a3_zero_struct(&f);
+    f.dt = ctx->dt;
+    f.time = ctx->time;
+    f.input = ctx->input;
+    f.actions = ctx->actions;
+    A3Window *win = a3_engine_window(ctx->engine);
+    if (win) a3_window_size(win, &f.screen_w, &f.screen_h);
+    a3_scripts_update(ctx->world, &f);
+}
+static void sys_script_events(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_scripts_fixed(ctx->world, ctx->dt); }
+static void sys_scripts_stop(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_scripts_stop(ctx->world); }
+
 /* ---- audio ---- */
 
 static void sys_audio(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_audio_update_world(ctx->world); }
@@ -110,6 +128,7 @@ void a3_modules_register_all(void) {
     a3_audio_register();
     a3_particles_register();
     a3_anim_register();
+    a3_scripts_register();
     A3SystemDesc d;
     a3_zero_struct(&d);
     d.name = "Character Input";
@@ -131,6 +150,21 @@ void a3_modules_register_all(void) {
     d.order = 100;
     d.update = sys_physics;
     d.on_stop = sys_physics_stop;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "Script Events";
+    d.phase = A3_PHASE_FIXED;
+    d.order = 110;
+    d.update = sys_script_events;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "Scripts";
+    d.phase = A3_PHASE_UPDATE;
+    d.order = 5;
+    d.update = sys_scripts;
+    d.on_stop = sys_scripts_stop;
     a3_systems_register(&d);
 
     a3_zero_struct(&d);

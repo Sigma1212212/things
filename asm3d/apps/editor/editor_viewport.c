@@ -2,6 +2,7 @@
  * ASM3D Editor - 3D viewport: camera, picking, gizmos, overlays, drag & drop.
  */
 #include "editor.h"
+#include "../../engine/script/a3_script_hud.h"
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
 #include "../../engine/resource/a3_assets.h"
@@ -586,6 +587,7 @@ void ed_viewport_panel(void *user, A3Ui *ui, A3Rect r) {
     ed->vp_hovered = a3_rect_contains(full, in->mouse_pos) && !a3_ui_popup_open(ui, "__none__");
     /* image (GL textures are bottom-up) */
     if (ed->vp_color.id) a3_ui_image(ui, ed->vp_color, full, a3_v2(0, 1), a3_v2(1, 0), 0xFFFFFFFFu);
+    if (ed->mode != ED_EDIT && ed->play_world) a3_scripts_draw_hud(ui, ed->play_world, full);
     /* the viewport area is interactive: claim it so clicks don't fall through */
     A3Rect hit = full;
     b32 clicked_empty = 0;

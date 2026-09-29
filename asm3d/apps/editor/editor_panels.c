@@ -6,6 +6,7 @@
  * and custom components get UI, undo and documentation automatically.
  */
 #include "editor.h"
+#include "../../engine/script/a3_script_engine.h"
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
 #include "../../engine/particles/a3_particles.h"
@@ -333,6 +334,51 @@ static void contextual_tips(A3Editor *ed, A3Ui *ui, A3World *w, A3Entity e) {
     a3_ui_set_cursor_pos(ui, a3_v2(cp.x, cp.y + th + 6));
 }
 
+static void assets_refresh(A3Editor *ed, b32 force);
+
+/* Script component: create / open the file, show its last error. */
+static void script_inspector_extras(A3Editor *ed, A3Ui *ui, A3Entity e, A3CScript *sc) {
+    A3World *w = ed_active_world(ed);
+    if (!sc->script.path[0]) {
+        if (a3_ui_button_ex(ui, "Create New Script", 0, A3_BUTTON_SMALL | A3_BUTTON_PRIMARY) && ed->mode == ED_EDIT) {
+            char base[64], rel[ED_PATH], abs[ED_PATH];
+            a3_strcpy(base, sizeof(base), a3_entity_name(w, e));
+            for (char *c = base; *c; ++c) if (!a3_is_ident(*c) && *c != '-') *c = '_';
+            for (int i = 0; i < 100; ++i) {
+                if (i == 0) a3_snprintf(rel, sizeof(rel), "Assets/Scripts/%s.a3script", base);
+                else a3_snprintf(rel, sizeof(rel), "Assets/Scripts/%s%d.a3script", base, i + 1);
+                ed_project_path(ed, rel, abs, sizeof(abs));
+                if (!a3_file_exists(abs)) break;
+            }
+            char dir[ED_PATH];
+            a3_path_dirname(abs, dir, sizeof(dir));
+            a3_dir_create(dir);
+            const char *tpl = ed_script_template();
+            if (a3_file_write_atomic(abs, tpl, a3_strlen(tpl)) == A3_OK) {
+                a3_strcpy(sc->script.path, sizeof(sc->script.path), rel);
+                ed_undo_mark_changed(ed, "Create Script");
+                assets_refresh(ed, 1);
+                if (ed_code_open(ed, rel) >= 0) a3_dock_show(&ed->dock, "Code");
+            }
+        }
+        a3_ui_tooltip(ui, "Makes a .a3script file for this object and opens it in the code editor");
+        return;
+    }
+    if (a3_ui_button_ex(ui, "Edit Script", 0, A3_BUTTON_SMALL)) { if (ed_code_open(ed, sc->script.path) >= 0) a3_dock_show(&ed->dock, "Code"); }
+    a3_ui_tooltip(ui, "Open the script in the code editor (saving it reloads running objects)");
+    /* newest error for this file */
+    for (u32 i = a3_scripts_error_count(); i-- > 0;) {
+        const A3ScriptErrorInfo *er = a3_scripts_error(i);
+        if (!a3_streq(er->path, sc->script.path)) continue;
+        char msg[480];
+        a3_snprintf(msg, sizeof(msg), "Line %d: %s%s%s", er->error.line, er->error.message, er->error.hint[0] ? ". " : "", er->error.hint);
+        f32 wdt = a3_ui_content_width(ui);
+        A3Rect tr = a3_ui_next_rect(ui, wdt, a3_ui_text_wrapped_height(A3_FONT_UI, wdt, msg));
+        a3_ui_text_wrapped(ui, A3_FONT_UI, tr, col(ui, A3_UIC_ERROR), msg);
+        break;
+    }
+}
+
 void ed_inspector_panel(void *user, A3Ui *ui, A3Rect r) {
     A3Editor *ed = (A3Editor *)user;
     A3_UNUSED(r);
@@ -436,6 +482,7 @@ void ed_inspector_panel(void *user, A3Ui *ui, A3Rect r) {
                 }
                 a3_ui_tooltip(ui, "Plays the sound once, without 3D effects");
             }
+            if (id == A3_T_SCRIPT) script_inspector_extras(ed, ui, e, (A3CScript *)data);
             if (id != A3_T_TRANSFORM && ed->mode == ED_EDIT) {
                 if (a3_ui_button_ex(ui, "Remove", 0, A3_BUTTON_SMALL | A3_BUTTON_FLAT)) remove_id = id;
             }
@@ -646,7 +693,7 @@ void ed_assets_panel(void *user, A3Ui *ui, A3Rect r) {
             a3_dir_create(abs);
             assets_refresh(ed, 1);
         }
-        if (a3_ui_menu_item(ui, "Script", 0, 1)) new_file(ed, "NewScript", ".a3script", "// ASM3D script\n// The scripting runtime is in development; see docs/STATUS.md.\n\nfn on_start() {\n}\n\nfn on_update(dt) {\n}\n");
+        if (a3_ui_menu_item(ui, "Script", 0, 1)) new_file(ed, "NewScript", ".a3script", ed_script_template());
         if (a3_ui_menu_item(ui, "Shader Graph", 0, 1)) { ed_shader_new(ed); a3_dock_show(&ed->dock, "Shader Maker"); }
         if (a3_ui_menu_item(ui, "Text Note", 0, 1)) new_file(ed, "Notes", ".txt", "");
         if (a3_ui_menu_item(ui, "Scene", 0, 1)) {
@@ -853,8 +900,27 @@ static const DocTopic g_topics[] = {
     { "Code Editor",
       "The Code panel edits scripts, shaders and text files with syntax highlighting, line numbers, undo, find and replace.\n"
       "Ctrl+S saves, Ctrl+F finds, Ctrl+Z / Ctrl+Y undo and redo, Tab indents.\n\n"
-      "Note: the ASM3D scripting language runtime is still in development (see docs/STATUS.md). Script files can be written and saved "
-      "but are not executed yet." },
+      "Scripts (.a3script) are checked while you type: a red dot in the margin marks the line with a problem; hover it to read the "
+      "explanation. Saving a script while the game is playing reloads it on every object that uses it, keeping their variables." },
+    { "Scripting",
+      "A3Script is the ASM3D scripting language. Add a Script component to an object and press 'Create New Script'.\n\n"
+      "let speed = 3                  // variables written at the top belong to this object\n"
+      "fn on_start() { }              // runs once when the game starts\n"
+      "fn on_update(dt) {             // runs every frame; dt = seconds since the last frame\n"
+      "    if key_down(\"space\") { self.position += vec3(0, speed * dt, 0) }\n"
+      "}\n"
+      "fn on_trigger_enter(other) { } // another object entered this object's trigger collider\n"
+      "fn on_collision(other) { }     // this object hit something\n"
+      "fn on_fixed_update(dt) { }     // every physics step\n\n"
+      "Values: numbers (3, 2.5), text (\"hi\"), true/false, nil, lists ([1, 2, 3]), vec3(x, y, z) and objects.\n"
+      "Control: if / else if / else, while, for i in 0..10, for item in list, break, continue, return, and / or / not.\n"
+      "Objects: self is the object running the script. obj.position, obj.rotation (degrees), obj.scale, obj.name, obj.active and "
+      "obj.velocity are shortcuts. Any component field works too: self.Light.intensity = 2, self.RigidBody.mass = 5. "
+      "You can even read another object's script variables: find(\"Player\").health.\n\n"
+      "Safety: a script that loops forever is stopped after a few million steps instead of freezing the game. When a script has an "
+      "error, the Console shows the file, line and a plain explanation (often with a 'did you mean' suggestion); only that object's "
+      "script stops, and fixing the file restarts it.\n\n"
+      "Every built-in function is listed under Script API below." },
     { "Keyboard Shortcuts",
       "Ctrl+S save   Ctrl+Z undo   Ctrl+Y redo   Ctrl+D duplicate   Delete remove\n"
       "W move tool   E rotate tool   R scale tool   F focus   Ctrl while dragging: snap\n"
@@ -863,10 +929,36 @@ static const DocTopic g_topics[] = {
       "Ctrl+P command palette   Ctrl+B build   F1 documentation" },
     { "What Works Today",
       "ASM3D is honest about its status. Working now: the editor, scenes, undo/redo, autosave and crash recovery, the PBR renderer "
-      "with shadows, physics with assembly kernels, the character controller, templates, the code editor, the Shader Maker and desktop builds.\n\n"
-      "In development: audio, animation, particles, the scripting language, visual scripting, terrain streaming, AI navigation, vehicles "
-      "and weather. docs/STATUS.md in the engine source lists exactly what is implemented, partial and planned." },
+      "with shadows, physics with assembly kernels, the character controller, audio (assembly mixer), keyframe animation, particles "
+      "(assembly simulation), the A3Script scripting language with HUD drawing, templates, the code editor, the Shader Maker and "
+      "desktop builds for Windows and Linux.\n\n"
+      "Not implemented yet: visual scripting, terrain and world streaming, AI navigation, vehicles, weather, skeletal animation and "
+      "macOS. docs/STATUS.md in the engine source lists exactly what is implemented, partial and planned." },
 };
+
+#define DOC_API_BASE 100000
+
+/* Script API categories in registration order (from the natives table). */
+static u32 api_categories(const char **out, u32 cap) {
+    u32 n = 0;
+    for (u32 i = 0; i < a3s_native_count(); ++i) {
+        const char *c = a3s_native_get(i)->category;
+        if (!c) continue;
+        b32 seen = 0;
+        for (u32 k = 0; k < n; ++k) if (a3_streq(out[k], c)) seen = 1;
+        if (!seen && n < cap) out[n++] = c;
+    }
+    return n;
+}
+
+static b32 api_category_matches(const char *cat, const char *q) {
+    if (a3_stristr(cat, q)) return 1;
+    for (u32 i = 0; i < a3s_native_count(); ++i) {
+        const A3SNative *n = a3s_native_get(i);
+        if (n->category && a3_streq(n->category, cat) && (a3_stristr(n->name, q) || (n->doc && a3_stristr(n->doc, q)))) return 1;
+    }
+    return 0;
+}
 
 void ed_docs_panel(void *user, A3Ui *ui, A3Rect r) {
     A3Editor *ed = (A3Editor *)user;
@@ -882,6 +974,18 @@ void ed_docs_panel(void *user, A3Ui *ui, A3Rect r) {
             a3_ui_pop_id(ui);
         }
         a3_ui_spacing(ui, 6);
+        a3_ui_label_colored(ui, col(ui, A3_UIC_TEXT_DIM), "Script API");
+        {
+            const char *cats[16];
+            u32 nc = api_categories(cats, 16);
+            for (u32 c = 0; c < nc; ++c) {
+                if (ed->search_query[0] && !api_category_matches(cats[c], ed->search_query)) continue;
+                a3_ui_push_id_int(ui, 5000 + (i64)c);
+                if (a3_ui_selectable(ui, cats[c], topic == DOC_API_BASE + (i32)c)) topic = DOC_API_BASE + (i32)c;
+                a3_ui_pop_id(ui);
+            }
+        }
+        a3_ui_spacing(ui, 6);
         a3_ui_label_colored(ui, col(ui, A3_UIC_TEXT_DIM), "Component Reference");
         for (u32 id = 0; id < A3_MAX_COMPONENT_TYPES; ++id) {
             A3ComponentType *t = a3_component_type(id);
@@ -895,7 +999,22 @@ void ed_docs_panel(void *user, A3Ui *ui, A3Rect r) {
     a3_ui_end_panel(ui);
     if (a3_ui_begin_panel(ui, "doc_body", a3_rect(r.x + list_w + 6, r.y, r.w - list_w - 6, r.h), 0)) {
         f32 wdt = a3_ui_content_width(ui);
-        if (topic >= 0 && topic < (i32)A3_ARRAY_COUNT(g_topics)) {
+        if (topic >= DOC_API_BASE) {
+            const char *cats[16];
+            u32 nc = api_categories(cats, 16);
+            u32 c = (u32)(topic - DOC_API_BASE);
+            if (c < nc) {
+                a3_ui_label_font(ui, A3_FONT_HEADING, col(ui, A3_UIC_TEXT), cats[c]);
+                for (u32 i = 0; i < a3s_native_count(); ++i) {
+                    const A3SNative *n = a3s_native_get(i);
+                    if (!n->category || !a3_streq(n->category, cats[c])) continue;
+                    if (ed->search_query[0] && !a3_stristr(n->name, ed->search_query) && !(n->doc && a3_stristr(n->doc, ed->search_query))) continue;
+                    a3_ui_label_font(ui, A3_FONT_MONO, col(ui, A3_UIC_ACCENT), n->signature ? n->signature : n->name);
+                    if (n->doc) { A3Rect tr = a3_ui_next_rect(ui, wdt, a3_ui_text_wrapped_height(A3_FONT_UI, wdt - 16, n->doc)); a3_ui_text_wrapped(ui, A3_FONT_UI, a3_rect(tr.x + 16, tr.y, tr.w - 16, tr.h), col(ui, A3_UIC_TEXT_DIM), n->doc); }
+                    a3_ui_spacing(ui, 2);
+                }
+            }
+        } else if (topic >= 0 && topic < (i32)A3_ARRAY_COUNT(g_topics)) {
             a3_ui_label_font(ui, A3_FONT_HEADING, col(ui, A3_UIC_TEXT), g_topics[topic].title);
             A3Rect tr = a3_ui_next_rect(ui, wdt, a3_ui_text_wrapped_height(A3_FONT_UI, wdt, g_topics[topic].text));
             a3_ui_text_wrapped(ui, A3_FONT_UI, tr, col(ui, A3_UIC_TEXT), g_topics[topic].text);

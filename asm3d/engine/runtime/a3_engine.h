@@ -85,7 +85,8 @@ void a3_engine_stop_play(A3Engine *e, A3World *w);
 /* Runs all systems for one frame (fixed steps as needed). paused: only
  * editor-safe systems run; step: advance exactly one fixed step. */
 void a3_engine_simulate(A3Engine *e, A3World *w, f32 dt, b32 paused, b32 step);
-void a3_engine_render_world(A3Engine *e, A3World *w, const A3RenderView *view_or_null);
+void a3_engine_render_world(A3Engine *e, A3World *w, const A3RenderView *view_or_null); /* game view (NULL) also draws the script HUD */
+void a3_engine_render_hud(A3Engine *e, A3World *w);
 void a3_engine_end_frame(A3Engine *e);
 u64  a3_engine_frame_index(A3Engine *e);
 f64  a3_engine_play_time(A3Engine *e);

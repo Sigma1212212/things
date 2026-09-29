@@ -8,6 +8,7 @@
  * --frames/--screenshot/--hidden make it usable for automated render tests.
  */
 #include "../../engine/runtime/a3_engine.h"
+#include "../../engine/script/a3_script_engine.h"
 #include "../../engine/scene/a3_components.h"
 #include "../../engine/scene/a3_scene_io.h"
 #include "../../engine/core/a3_log.h"
@@ -149,6 +150,24 @@ int main(int argc, char **argv) {
         if (frames >= 0) dt = 1.0f / 60.0f; /* deterministic stepping for tests */
         a3_engine_simulate(eng, w, dt, 0, 0);
         a3_engine_render_world(eng, w, 0);
+        /* load_scene() from a script: switch between frames */
+        char next[512];
+        if (a3_scripts_take_scene_request(w, next, sizeof(next))) {
+            char path[1024];
+            if (project[0]) a3_path_join(path, sizeof(path), project, next); else a3_strcpy(path, sizeof(path), next);
+            A3World *nw = a3_world_create("Game");
+            A3SceneLoadReport rep;
+            if (a3_scene_load_file(nw, path, &rep) == A3_OK) {
+                a3_engine_stop_play(eng, w);
+                a3_world_destroy(w);
+                w = nw;
+                a3_engine_start_play(eng, w);
+                A3_INFO("player", "loaded scene %s", next);
+            } else {
+                A3_ERROR("player", "load_scene(\"%s\"): %s", next, rep.error);
+                a3_world_destroy(nw);
+            }
+        }
         ++frame;
         if (frames >= 0 && frame >= frames) {
             if (shot) a3_engine_screenshot(eng, shot);

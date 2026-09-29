@@ -12,6 +12,7 @@
  * and captured automatically (docs screenshots, CI smoke tests).
  */
 #include "editor.h"
+#include "../../engine/script/a3_script_engine.h"
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
 #include "../../engine/particles/a3_particles.h"
@@ -845,6 +846,41 @@ static int selftest_run(A3Editor *ed, const char *tmp) {
         lt = a3_transform(ed->world, a3_entity_find_by_guid(ed->world, lift_guid));
         ST_CHECK(lt && a3_absf(lt->position.y - 5.0f) > 1.0f);
     }
+    /* scripts: run in play mode, hot reload, never touch the edited scene, error markers */
+    {
+        a3_scripts_clear_errors();
+        char sp[ED_PATH], sdir[ED_PATH];
+        ed_project_path(ed, "Assets/Scripts/Spin.a3script", sp, sizeof(sp));
+        a3_path_dirname(sp, sdir, sizeof(sdir));
+        a3_dir_create(sdir);
+        const char *v1 = "let frames = 0\nfn on_update(dt) {\n    frames += 1\n    self.position = vec3(0, 3, 0)\n    self.name = \"Spun\"\n}\n";
+        ST_CHECK(a3_file_write_atomic(sp, v1, a3_strlen(v1)) == A3_OK);
+        A3Entity sc = ed_create_entity(ed, "Spinner", A3_PRIM_CUBE, "Script");
+        A3CScript *scc = (A3CScript *)a3_component_get(ed->world, sc, A3_T_SCRIPT);
+        ST_CHECK(scc != 0);
+        a3_strcpy(scc->script.path, sizeof(scc->script.path), "Assets/Scripts/Spin.a3script");
+        ed_undo_end_frame(ed);
+        u64 sg = a3_entity_guid(ed->world, sc);
+        ed_play(ed);
+        for (int i = 0; i < 10; ++i) a3_engine_simulate(ed->engine, ed->play_world, 1.0f / 60.0f, 0, 0);
+        A3Entity ps = a3_entity_find_by_guid(ed->play_world, sg);
+        ST_CHECK(a3_streq(a3_entity_name(ed->play_world, ps), "Spun"));
+        ST_CHECK(a3_absf(a3_transform(ed->play_world, ps)->position.y - 3.0f) < 1e-4f);
+        const char *v2 = "let frames = 0\nfn on_update(dt) {\n    frames += 1\n    self.position = vec3(0, 7, 0)\n}\n";
+        ST_CHECK(a3_file_write_atomic(sp, v2, a3_strlen(v2)) == A3_OK);
+        a3_scripts_invalidate("Assets/Scripts/Spin.a3script");
+        for (int i = 0; i < 3; ++i) a3_engine_simulate(ed->engine, ed->play_world, 1.0f / 60.0f, 0, 0);
+        ST_CHECK(a3_absf(a3_transform(ed->play_world, ps)->position.y - 7.0f) < 1e-4f);
+        ST_CHECK(a3_scripts_error_count() == 0);
+        ed_stop(ed);
+        ST_CHECK(a3_streq(a3_entity_name(ed->world, a3_entity_find_by_guid(ed->world, sg)), "Spinner"));
+        char bp[ED_PATH];
+        ed_project_path(ed, "Assets/Scripts/Bad.a3script", bp, sizeof(bp));
+        const char *bad = "fn on_update(dt) {\n    prnt(dt)\n}\n";
+        ST_CHECK(a3_file_write_atomic(bp, bad, a3_strlen(bad)) == A3_OK);
+        i32 bd = ed_code_open(ed, "Assets/Scripts/Bad.a3script");
+        ST_CHECK(bd >= 0 && ed->docs[bd].error_count == 1 && ed->docs[bd].error_lines[0] == 2);
+    }
     /* save + reopen */
     ST_CHECK(ed_scene_save(ed));
     u32 saved_count = a3_world_entity_count(ed->world);
@@ -881,6 +917,26 @@ static int selftest_run(A3Editor *ed, const char *tmp) {
     ST_CHECK(ed_shader_selftest(ed) == 0);
     /* palette commands resolve */
     ed_run_command(ed, "Toggle Grid");
+    /* the Platformer template plays with its scripts: collecting an orb updates the HUD */
+    {
+        a3_scripts_clear_errors();
+        ST_CHECK(ed_project_create(ed, tmp, "Plat", 3));
+        ed_play(ed);
+        for (int i = 0; i < 5; ++i) a3_engine_simulate(ed->engine, ed->play_world, 1.0f / 60.0f, 0, 0);
+        const A3HudCmd *hud;
+        u32 nh = a3_scripts_hud(ed->play_world, &hud);
+        ST_CHECK(nh >= 3 && a3_streq(hud[1].text, "Orbs  0 / 12"));
+        A3Entity orb = a3_entity_find_by_name(ed->play_world, "Orb");
+        A3Entity pl = a3_entity_find_by_name(ed->play_world, "Player");
+        ST_CHECK(a3_entity_valid(ed->play_world, orb) && a3_entity_valid(ed->play_world, pl));
+        A3Vec3 op = a3_transform_world_position(ed->play_world, orb);
+        a3_transform(ed->play_world, pl)->position = a3_v3(op.x, op.y - 0.8f, op.z);
+        for (int i = 0; i < 10; ++i) a3_engine_simulate(ed->engine, ed->play_world, 1.0f / 60.0f, 0, 0);
+        nh = a3_scripts_hud(ed->play_world, &hud);
+        ST_CHECK(nh >= 3 && a3_streq(hud[1].text, "Orbs  1 / 12"));
+        ST_CHECK(a3_scripts_error_count() == 0);
+        ed_stop(ed);
+    }
     A3_INFO("selftest", "editor self test passed (%d checks)", passed);
     return 0;
 }

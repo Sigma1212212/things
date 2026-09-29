@@ -5,6 +5,7 @@
  */
 #include "a3_physics.h"
 #include "a3_physics_internal.h"
+#include "a3_character.h"
 #include "a3_physics_kernels.h"
 #include "../scene/a3_components.h"
 #include "../resource/a3_assets.h"
@@ -30,6 +31,7 @@ typedef struct PBody {
     u32 slot;                /* solver slot, 0 = static world */
     i32 type;
     b32 trigger;
+    b32 sensor;              /* character capsule: only seen by triggers (never collides) */
     b32 sleeping;
     u32 layer, mask;
     f32 inv_mass;
@@ -476,6 +478,32 @@ static void build_bodies(A3PhysicsWorld *pw) {
         if (b.slot) pw->slot_body[b.slot] = bi;
         a3_hashmap_put(&pw->body_by_guid, b.guid ? b.guid : 1, bi + 1);
     }
+    /* characters without a Collider: a sensor capsule so trigger zones notice the player */
+    u32 ctypes[2] = { A3_T_CHARACTER, A3_T_TRANSFORM };
+    A3Query cq = a3_query_begin(w, ctypes, 2);
+    while (a3_query_next(&cq)) {
+        if (a3_component_has(w, cq.entity, A3_T_COLLIDER) || !a3_entity_active(w, cq.entity)) continue;
+        const A3CCharacterController *cc = (const A3CCharacterController *)cq.components[0];
+        const A3CTransform *t = (const A3CTransform *)cq.components[1];
+        PBody b;
+        a3_zero_struct(&b);
+        b.e = cq.entity;
+        b.guid = a3_entity_guid(w, cq.entity);
+        b.sensor = 1;
+        b.type = A3_BODY_KINEMATIC;
+        b.mask = 0xFFFFFFFFu;
+        b.mesh = -1;
+        f32 r = a3_maxf(cc->radius, 0.05f), h = a3_maxf(cc->height, 2.0f * r);
+        b.shape.type = A3_SHAPE_CAPSULE;
+        b.shape.radius = r;
+        b.shape.half_height = h * 0.5f - r;
+        b.shape.pos = a3_v3(t->world.m[12], t->world.m[13] + h * 0.5f, t->world.m[14]);
+        b.shape.rot = a3_quat_identity();
+        b.shape.rot_m = a3_mat4_identity();
+        b.inv_inertia_world = a3_mat4_scale(a3_v3_zero());
+        if (!a3_array_push(pw->bodies, b, A3_MEM_PHYSICS)) break;
+        a3_hashmap_put(&pw->body_by_guid, b.guid ? b.guid : 1, pw->bodies.count);
+    }
     if (grow_slots(pw, 1)) {
         pw->lin_vel[0] = pw->ang_vel[0] = pw->accel[0] = a3_v4(0, 0, 0, 0);
         pw->damp[0] = a3_v4(1, 1, 0, 0);
@@ -647,6 +675,7 @@ void a3_physics_step(A3World *w, f32 dt) {
         PBody *a = &pw->bodies.data[ia], *b = &pw->bodies.data[ib];
         b32 a_moves = a->slot && a->inv_mass > 0, b_moves = b->slot && b->inv_mass > 0;
         b32 any_trigger = a->trigger || b->trigger;
+        if ((a->sensor || b->sensor) && (!any_trigger || (a->sensor && b->sensor))) continue; /* sensors only meet triggers */
         if (!a_moves && !b_moves && !any_trigger && !(a->slot || b->slot)) continue; /* static-static */
         if (!any_trigger && !a_moves && !b_moves && !(a->sleeping || b->sleeping)) {
             /* kinematic vs static/kinematic: no response needed */
@@ -837,7 +866,7 @@ b32 a3_physics_raycast_ignore(A3World *w, A3Vec3 origin, A3Vec3 dir, f32 max_dis
     for (u32 i = 0; i < n; ++i) {
         if (ts[i] < 0 || ts[i] > best) continue;
         PBody *b = &pw->bodies.data[i];
-        if (b->trigger || !((mask >> b->layer) & 1u) || a3_entity_eq(b->e, ignore)) continue;
+        if (b->trigger || b->sensor || !((mask >> b->layer) & 1u) || a3_entity_eq(b->e, ignore)) continue;
         f32 t;
         A3Vec3 nrm;
         b32 h = b->mesh >= 0 ? a3_trimesh_raycast(&pw->meshes.data[b->mesh].tm, origin, dir, best, &t, &nrm)
@@ -927,7 +956,7 @@ void a3__physics_visit_near(A3World *w, A3Aabb box, A3Entity ignore, A3PhysBodyV
     ensure_built(pw);
     for (u32 i = 0; i < pw->bodies.count; ++i) {
         PBody *b = &pw->bodies.data[i];
-        if (b->trigger || a3_entity_eq(b->e, ignore) || !a3_aabb_overlap(b->shape.aabb, box)) continue;
+        if (b->trigger || b->sensor || a3_entity_eq(b->e, ignore) || !a3_aabb_overlap(b->shape.aabb, box)) continue;
         if (!fn(&b->shape, b->mesh >= 0 ? &pw->meshes.data[b->mesh].tm : 0, b->e, b->type == A3_BODY_DYNAMIC, user)) return;
     }
 }

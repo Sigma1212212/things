@@ -285,13 +285,13 @@ void a3_ui_bezier(A3Ui *ui, A3Vec2 p0, A3Vec2 p1, A3Vec2 p2, A3Vec2 p3, u32 col,
     a3_ui_polyline(ui, pts, 33, col, t, 0);
 }
 
-f32 a3_ui_text_n(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 col, const char *text, i32 len) {
+static f32 text_impl(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 col, const char *text, i32 len, f32 scale) {
     if (!text) return 0;
-    f32 x = a3_floorf(pos.x + 0.5f), y = a3_floorf(pos.y + 0.5f);
+    f32 x = scale == 1.0f ? a3_floorf(pos.x + 0.5f) : pos.x, y = scale == 1.0f ? a3_floorf(pos.y + 0.5f) : pos.y;
     f32 start = x;
-    f32 lh = a3_font_line_height(font);
+    f32 lh = a3_font_line_height(font) * scale;
     A3Rect clip = a3_ui_clip(ui);
-    if (y > clip.y + clip.h || y + lh < clip.y) return a3_font_text_width(font, text, len);
+    if (y > clip.y + clip.h || y + lh < clip.y) return a3_font_text_width(font, text, len) * scale;
     ui_prim_reserve_cmd(ui, 0, 1);
     UiDrawList *l = ui_list(ui);
     f32 iw = 1.0f / (f32)a3_font_atlas_width, ih = 1.0f / (f32)a3_font_atlas_height;
@@ -299,11 +299,11 @@ f32 a3_ui_text_n(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 col, const char *text,
     while (text < end && *text) {
         u32 cp;
         text += a3_utf8_decode(text, &cp);
-        if (cp == '\t') { x += a3_font_glyph(font, ' ')->advance * 4; continue; }
+        if (cp == '\t') { x += a3_font_glyph(font, ' ')->advance * 4 * scale; continue; }
         if (cp == '\n') continue;
         const A3GlyphData *g = a3_font_glyph(font, cp);
-        if (g->w && x + g->xoff < clip.x + clip.w && x + g->xoff + g->w > clip.x) {
-            f32 x0 = x + g->xoff, y0 = y + g->yoff, x1 = x0 + g->w, y1 = y0 + g->h;
+        if (g->w && x + g->xoff * scale < clip.x + clip.w && x + (g->xoff + g->w) * scale > clip.x) {
+            f32 x0 = x + g->xoff * scale, y0 = y + g->yoff * scale, x1 = x0 + g->w * scale, y1 = y0 + g->h * scale;
             f32 u0 = g->x * iw, v0 = g->y * ih, u1 = (g->x + g->w) * iw, v1 = (g->y + g->h) * ih;
             u32 b = l->v.count;
             push_vtx(l, x0, y0, u0, v0, col);
@@ -313,10 +313,13 @@ f32 a3_ui_text_n(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 col, const char *text,
             push_tri(l, b, b + 1, b + 2);
             push_tri(l, b, b + 2, b + 3);
         }
-        x += g->advance;
+        x += g->advance * scale;
     }
     return x - start;
 }
+
+f32 a3_ui_text_n(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 col, const char *text, i32 len) { return text_impl(ui, font, pos, col, text, len, 1.0f); }
+f32 a3_ui_text_scaled(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 col, const char *text, f32 scale) { return text_impl(ui, font, pos, col, text, -1, scale > 0 ? scale : 1.0f); }
 
 f32 a3_ui_text(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 col, const char *text) { return a3_ui_text_n(ui, font, pos, col, text, -1); }
 

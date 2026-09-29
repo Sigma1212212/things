@@ -394,6 +394,7 @@ void a3_particles_register(void) {
     a3_world_on_destroy(a3_particles_release);
     if (A3_T_PARTICLE_EMITTER != 0xFFFFFFFFu && a3_component_type(A3_T_PARTICLE_EMITTER)) return;
     A3CParticleEmitter d;
+    a3_zero_struct(&d);
     a3_particles_preset(&d, A3_PARTICLES_FIRE);
     u32 t = a3_component_register("ParticleEmitter", "Effects", sizeof(A3CParticleEmitter), 16, &d, A3_COMP_BUILTIN,
         "Sprays particles: fire, smoke, sparks, rain, magic... Use Create > Particles for ready-made effects, then tweak them here.");

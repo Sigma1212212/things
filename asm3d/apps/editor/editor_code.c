@@ -11,6 +11,7 @@
 #include "../../engine/core/a3_string.h"
 #include "../../engine/core/a3_format.h"
 #include "../../engine/core/a3_json.h"
+#include "../../engine/script/a3_script_engine.h"
 #include "../../engine/platform/a3_platform.h"
 
 #define GUTTER_W 54.0f
@@ -195,6 +196,8 @@ static i32 language_for(const char *path) {
     return LANG_TEXT;
 }
 
+static void validate_script(EdDocument *d, b32 log);
+
 static void doc_free(EdDocument *d) {
     a3_free(d->text);
     a3_free(d->line_starts);
@@ -225,12 +228,45 @@ i32 ed_code_open(A3Editor *ed, const char *path) {
         d->dirty = 1;
     }
     if (!d->text) { doc_free(d); return -1; }
+    if (d->language == LANG_SCRIPT && d->len) validate_script(d, 0);
     ed->doc_active = (i32)ed->doc_count++;
     return ed->doc_active;
 }
 
+const char *ed_script_template(void) {
+    return
+        "// A3Script: runs on the object that has this Script component.\n"
+        "// Help > Docs > Scripting lists every function you can call.\n"
+        "\n"
+        "let speed = 2          // top-level variables belong to this object\n"
+        "\n"
+        "fn on_start() {\n"
+        "    print(\"Hello from \" + self.name)\n"
+        "}\n"
+        "\n"
+        "fn on_update(dt) {\n"
+        "    // spin slowly (degrees)\n"
+        "    self.rotation += vec3(0, 45 * dt, 0)\n"
+        "}\n"
+        "\n"
+        "// fn on_trigger_enter(other) { }\n"
+        "// fn on_collision(other) { }\n";
+}
+
+static void validate_script(EdDocument *d, b32 log) {
+    A3SError err;
+    d->checked_edit_time = d->last_edit_time;
+    if (a3_scripts_check(d->path, d->text ? d->text : "", d->len, &err)) return;
+    d->error_lines[0] = err.line > 0 ? err.line : 1;
+    if (err.hint[0]) a3_snprintf(d->error_msgs[0], sizeof(d->error_msgs[0]), "%s. %s", err.message, err.hint);
+    else a3_snprintf(d->error_msgs[0], sizeof(d->error_msgs[0]), "%s", err.message);
+    d->error_count = 1;
+    if (log) a3_log_hint(A3_LOG_WARN, "code", err.hint[0] ? err.hint : 0, "%s:%d: %s", d->path, err.line, err.message);
+}
+
 static void validate(A3Editor *ed, EdDocument *d) {
     d->error_count = 0;
+    if (d->language == LANG_SCRIPT) { validate_script(d, 1); return; }
     if (d->language != LANG_JSON) return;
     A3Arena ar;
     a3_arena_init(&ar, A3_MEM_TEMP, A3_KB(64));
@@ -258,6 +294,7 @@ b32 ed_code_save(A3Editor *ed, i32 i) {
     }
     d->dirty = 0;
     validate(ed, d);
+    if (d->language == LANG_SCRIPT) a3_scripts_invalidate(d->path); /* running objects reload it */
     a3_ui_notify(ed->ui, colr(ed->ui, A3_UIC_SUCCESS), "Saved %s", a3_path_filename(d->path));
     return 1;
 }
@@ -280,13 +317,13 @@ void ed_code_free(A3Editor *ed) {
 /* Syntax highlighting                                                      */
 /* ======================================================================== */
 
-static const char *const kw_script[] = { "fn", "let", "var", "const", "if", "else", "while", "for", "in", "return", "break", "continue",
-                                         "true", "false", "null", "and", "or", "not", "import", "self", "entity", "on", 0 };
+static const char *const kw_script[] = { "fn", "let", "var", "if", "else", "while", "for", "in", "return", "break", "continue",
+                                         "true", "false", "nil", "null", "and", "or", "not", "self", 0 };
 static const char *const kw_glsl[] = { "if", "else", "for", "while", "do", "return", "break", "continue", "discard", "struct", "const",
                                        "uniform", "in", "out", "inout", "layout", "true", "false", "precision", "highp", "mediump", "lowp", 0 };
 static const char *const ty_glsl[] = { "void", "float", "int", "uint", "bool", "vec2", "vec3", "vec4", "ivec2", "ivec3", "ivec4", "mat2", "mat3",
                                        "mat4", "sampler2D", "samplerCube", "A3Surface", 0 };
-static const char *const ty_script[] = { "number", "string", "vec3", "bool", "Entity", "Transform", 0 };
+static const char *const ty_script[] = { "vec3", "pi", "tau", "Transform", "RigidBody", "Collider", "Light", "Camera", "MeshRenderer", 0 };
 
 static b32 word_in(const char *s, i32 n, const char *const *list) {
     for (u32 i = 0; list[i]; ++i) if ((i32)a3_strlen(list[i]) == n && a3_strncmp(list[i], s, (usize)n) == 0) return 1;
@@ -607,7 +644,7 @@ void ed_code_panel(void *user, A3Ui *ui, A3Rect r) {
             if (!a3_file_exists(abs)) break;
         }
         i32 di = ed_code_open(ed, rel);
-        if (di >= 0) doc_set_text(&ed->docs[di], "// ASM3D script\nfn on_start() {\n}\n\nfn on_update(dt) {\n}\n");
+        if (di >= 0) doc_set_text(&ed->docs[di], ed_script_template());
     }
     if (close_idx >= 0) {
         if (ed->docs[close_idx].dirty) ed_code_save(ed, close_idx); /* never lose typed code */
@@ -622,6 +659,11 @@ void ed_code_panel(void *user, A3Ui *ui, A3Rect r) {
     i32 di = ed->doc_active;
     EdDocument *d = &ed->docs[di];
     doc_lines(d);
+    /* live script check shortly after typing stops */
+    if (d->language == LANG_SCRIPT && d->checked_edit_time != d->last_edit_time && a3_ui_time(ui) - d->last_edit_time > 0.4) {
+        d->error_count = 0;
+        validate_script(d, 0);
+    }
     /* toolbar */
     if (a3_ui_button_ex(ui, "Save", 60, A3_BUTTON_SMALL | (d->dirty ? A3_BUTTON_PRIMARY : 0))) ed_code_save(ed, di);
     a3_ui_same_line(ui);

@@ -11,6 +11,7 @@
  *     .gitignore
  */
 #include "editor.h"
+#include "../../engine/script/a3_script_engine.h"
 #include "../../engine/scene/a3_scene_io.h"
 #include "../../engine/physics/a3_physics.h"
 #include "../../engine/audio/a3_audio.h"
@@ -153,6 +154,57 @@ static A3Entity tp_player(A3World *w, A3Vec3 pos, A3CameraMode mode, b32 visible
     return p;
 }
 
+/* Platformer scripts (written into the project, editable in the Code panel). */
+static const char *const g_platformer_orb_script =
+    "// Orb: collected when the player touches it.\n"
+    "fn on_trigger_enter(other) {\n"
+    "    if other.name == \"Player\" {\n"
+    "        send(find(\"Game\"), \"collect\")\n"
+    "        play_sound(\"coin\", 0.6, 0.9 + random() * 0.2)\n"
+    "        destroy(self)\n"
+    "    }\n"
+    "}\n";
+
+static const char *const g_platformer_game_script =
+    "// Game rules: counts orbs, shows the HUD, remembers your best time.\n"
+    "let score = 0\n"
+    "let total = 0\n"
+    "let finished = false\n"
+    "let finish_time = 0\n"
+    "let best = 0\n"
+    "\n"
+    "fn on_start() {\n"
+    "    total = len(find_all(\"Orb\"))\n"
+    "    best = load_value(\"best_time\", 0)\n"
+    "}\n"
+    "\n"
+    "fn collect() {\n"
+    "    score += 1\n"
+    "    if score >= total and not finished {\n"
+    "        finished = true\n"
+    "        finish_time = round(time(), 1)\n"
+    "        if best == 0 or finish_time < best {\n"
+    "            best = finish_time\n"
+    "            save_value(\"best_time\", best)\n"
+    "        }\n"
+    "        play_sound(\"powerup\")\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "fn on_update(dt) {\n"
+    "    hud_rect(24, 24, 300, 86, vec3(0.05, 0.07, 0.1), 0.55)\n"
+    "    hud_text(\"Orbs  \" + score + \" / \" + total, 42, 34, 1.3, vec3(1, 0.85, 0.25))\n"
+    "    hud_text(\"Time  \" + format_number(finished and finish_time or time(), 1) + \" s\", 42, 72, 1, vec3(0.9, 0.95, 1))\n"
+    "    if best > 0 { hud_text(\"Best \" + format_number(best, 1) + \" s\", 1256, 34, 1, vec3(1, 1, 1), 0.85, \"right\") }\n"
+    "    if finished {\n"
+    "        hud_text(\"All orbs collected!\", 640, 290, 2.6, vec3(1, 0.9, 0.3), 1, \"center\")\n"
+    "        hud_text(\"Your time: \" + format_number(finish_time, 1) + \" s\", 640, 360, 1.4, vec3(1, 1, 1), 1, \"center\")\n"
+    "    }\n"
+    "    // fell off the level: back to the start\n"
+    "    let p = find(\"Player\")\n"
+    "    if p != nil and p.position.y < -12 { p.position = vec3(0, 0.5, 1) }\n"
+    "}\n";
+
 void ed_build_template_scene(A3World *w, i32 tpl) {
     A3CWorldSettings *ws = a3_world_settings(w);
     const A3Vec4 grass = a3_v4(0.36f, 0.5f, 0.3f, 1), stone = a3_v4(0.6f, 0.6f, 0.62f, 1), wood = a3_v4(0.62f, 0.45f, 0.3f, 1);
@@ -201,7 +253,12 @@ void ed_build_template_scene(A3World *w, i32 tpl) {
             mo->bob_height = 0.15f;
             mo->bob_speed = 0.8f;
             mo->phase = (f32)i * 0.13f;
+            A3CScript *osc = (A3CScript *)a3_component_add(w, orb, A3_T_SCRIPT);
+            a3_strcpy(osc->script.path, sizeof(osc->script.path), "Assets/Scripts/Orb.a3script");
         }
+        A3Entity game = a3_entity_create(w, "Game");
+        A3CScript *gsc = (A3CScript *)a3_component_add(w, game, A3_T_SCRIPT);
+        a3_strcpy(gsc->script.path, sizeof(gsc->script.path), "Assets/Scripts/Game.a3script");
         A3Entity pl = tp_player(w, a3_v3(0, 0, 1), A3_CAM_THIRD_PERSON, 1);
         ((A3CCharacterController *)a3_component_get(w, pl, A3_T_CHARACTER))->jump_height = 1.8f;
         /* keyframed elevator (Assets/Animations/Elevator.a3anim is written with the project) */
@@ -396,6 +453,14 @@ b32 ed_project_create(A3Editor *ed, const char *location, const char *name, i32 
         write_text(ap, asb.data);
         a3_strbuf_free(&asb);
         a3_anim_clip_free(&clip);
+        /* gameplay scripts: collectible orbs, score HUD, best time */
+        char sp[ED_PATH], sdir[ED_PATH];
+        a3_path_join(sp, sizeof(sp), dir, "Assets/Scripts/Orb.a3script");
+        a3_path_dirname(sp, sdir, sizeof(sdir));
+        a3_dir_create(sdir);
+        write_text(sp, g_platformer_orb_script);
+        a3_path_join(sp, sizeof(sp), dir, "Assets/Scripts/Game.a3script");
+        write_text(sp, g_platformer_game_script);
     }
     /* scene */
     ed->world = a3_world_create("Main");

@@ -136,6 +136,7 @@ void  a3_ui_circle_outline(A3Ui *ui, A3Vec2 c, f32 radius, u32 color, f32 thickn
 void  a3_ui_bezier(A3Ui *ui, A3Vec2 p0, A3Vec2 p1, A3Vec2 p2, A3Vec2 p3, u32 color, f32 thickness);
 f32   a3_ui_text(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 color, const char *text);            /* pos = top-left */
 f32   a3_ui_text_n(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 color, const char *text, i32 len);
+f32   a3_ui_text_scaled(A3Ui *ui, A3FontId font, A3Vec2 pos, u32 color, const char *text, f32 scale); /* any size (game HUD) */
 typedef enum A3Align { A3_ALIGN_LEFT = 0, A3_ALIGN_CENTER, A3_ALIGN_RIGHT } A3Align;
 void  a3_ui_text_in_rect(A3Ui *ui, A3FontId font, A3Rect r, A3Align align, u32 color, const char *text);
 /* Word-wrapped text; returns height used. */
