@@ -266,7 +266,6 @@ static b32 write_project_file(A3Editor *ed, i32 tpl) {
     a3_jw_key(&jw, "buildTargets");
     a3_jw_begin_array(&jw);
     a3_jw_string(&jw, "Desktop");
-    a3_jw_string(&jw, "Web");
     a3_jw_end_array(&jw);
     a3_jw_end_object(&jw);
     a3_strbuf_append_char(&sb, '\n');
