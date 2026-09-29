@@ -67,7 +67,7 @@
 /* Assembly fast paths are used when the build enables them and the arch has an
  * implementation. Every assembly routine has a portable C reference that is
  * tested against it (see tests/test_simd.c). */
-#if defined(A3_USE_ASM) && A3_USE_ASM && defined(A3_ARCH_X64) && !A3_PLATFORM_WINDOWS
+#if defined(A3_USE_ASM) && A3_USE_ASM && defined(A3_ARCH_X64)
 #  define A3_HAS_X64_ASM 1
 #else
 #  define A3_HAS_X64_ASM 0
@@ -115,7 +115,12 @@ typedef int32_t  b32;
 #  else
 #    define A3_DEBUG_BREAK() __builtin_trap()
 #  endif
-#  define A3_PRINTF_LIKE(fmt_idx, args_idx) __attribute__((format(printf, fmt_idx, args_idx)))
+#  if defined(__MINGW32__)
+     /* the engine uses its own C99-style formatter, not the MS runtime printf */
+#    define A3_PRINTF_LIKE(fmt_idx, args_idx) __attribute__((format(gnu_printf, fmt_idx, args_idx)))
+#  else
+#    define A3_PRINTF_LIKE(fmt_idx, args_idx) __attribute__((format(printf, fmt_idx, args_idx)))
+#  endif
 #endif
 
 #if A3_PLATFORM_WEB

@@ -62,6 +62,8 @@ static int run_tests(const char *filter) {
 A3_WASM_EXPORT("a3_run_tests") int a3_run_tests(void) { return run_tests(0); }
 #else
 int main(int argc, char **argv) {
+    /* asm3d_tests [filter] [-v]   (-v enables debug logging) */
+    if (argc > 2 && a3_streq(argv[2], "-v")) a3_log_set_min_level(A3_LOG_DEBUG);
     return run_tests(argc > 1 ? argv[1] : 0) ? 1 : 0;
 }
 #endif

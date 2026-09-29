@@ -51,6 +51,11 @@ A3_INLINE f32 a3_minf(f32 a, f32 b) { return a < b ? a : b; }
 A3_INLINE f32 a3_maxf(f32 a, f32 b) { return a > b ? a : b; }
 A3_INLINE f32 a3_clampf(f32 x, f32 lo, f32 hi) { return x < lo ? lo : (x > hi ? hi : x); }
 A3_INLINE f32 a3_saturate(f32 x) { return a3_clampf(x, 0.0f, 1.0f); }
+A3_INLINE i32 a3_mini(i32 a, i32 b) { return a < b ? a : b; }
+A3_INLINE i32 a3_maxi(i32 a, i32 b) { return a > b ? a : b; }
+A3_INLINE i32 a3_clampi(i32 x, i32 lo, i32 hi) { return x < lo ? lo : (x > hi ? hi : x); }
+A3_INLINE u32 a3_minu(u32 a, u32 b) { return a < b ? a : b; }
+A3_INLINE u32 a3_maxu(u32 a, u32 b) { return a > b ? a : b; }
 A3_INLINE f32 a3_lerpf(f32 a, f32 b, f32 t) { return a + (b - a) * t; }
 A3_INLINE f32 a3_signf(f32 x) { return x > 0.0f ? 1.0f : (x < 0.0f ? -1.0f : 0.0f); }
 A3_INLINE f32 a3_smoothstep(f32 e0, f32 e1, f32 x) { f32 t = a3_saturate((x - e0) / (e1 - e0)); return t * t * (3.0f - 2.0f * t); }
@@ -134,6 +139,14 @@ A3_INLINE A3Vec4 a3_v4_add(A3Vec4 a, A3Vec4 b) { return a3_v4(a.x + b.x, a.y + b
 A3_INLINE A3Vec4 a3_v4_scale(A3Vec4 a, f32 s) { return a3_v4(a.x * s, a.y * s, a.z * s, a.w * s); }
 A3_INLINE f32 a3_v4_dot(A3Vec4 a, A3Vec4 b) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
 A3_INLINE A3Vec4 a3_v4_lerp(A3Vec4 a, A3Vec4 b, f32 t) { return a3_v4(a3_lerpf(a.x, b.x, t), a3_lerpf(a.y, b.y, t), a3_lerpf(a.z, b.z, t), a3_lerpf(a.w, b.w, t)); }
+
+/* ---- Color ----
+ * Colors shown in the editor (color pickers, textures) are sRGB. Lighting
+ * math happens in linear space, so colors are converted on the way in. */
+f32 a3_srgb_to_linear(f32 c);
+f32 a3_linear_to_srgb(f32 c);
+A3_INLINE A3Vec4 a3_color_to_linear(A3Vec4 c) { return a3_v4(a3_srgb_to_linear(c.x), a3_srgb_to_linear(c.y), a3_srgb_to_linear(c.z), c.w); }
+A3_INLINE A3Vec3 a3_color3_to_linear(A3Vec4 c) { return a3_v3(a3_srgb_to_linear(c.x), a3_srgb_to_linear(c.y), a3_srgb_to_linear(c.z)); }
 
 /* ---- Quaternion ---- */
 A3_INLINE A3Quat a3_quat(f32 x, f32 y, f32 z, f32 w) { A3Quat q = { x, y, z, w }; return q; }

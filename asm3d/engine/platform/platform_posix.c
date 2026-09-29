@@ -181,6 +181,9 @@ A3Result a3_file_copy(const char *src, const char *dst) {
     if (r != A3_OK) return r;
     r = a3_file_write_all(dst, fd.data, fd.size);
     a3_free(fd.data);
+    /* keep permission bits so copied programs stay executable */
+    struct stat st;
+    if (r == A3_OK && stat(src, &st) == 0) chmod(dst, st.st_mode & 07777);
     return r;
 }
 
