@@ -29,6 +29,7 @@ typedef struct Gen {
     A3_ARRAY_TYPE(u32) edges;     /* a, b, lanes */
     A3HashMap node_map;
     u32 light_count;
+    A3_ARRAY_TYPE(u32) signals;   /* road nodes with traffic signals */
 } Gen;
 
 void a3_city_desc_default(A3CityDesc *d) {
@@ -108,17 +109,60 @@ static void edge(Gen *g, u32 a, u32 b, u32 lanes) {
 
 static void street_light(Gen *g, A3Vec3 base, f32 yaw) {
     if (!g->d->street_lights) return;
-    A3Entity pole = box(g, g->g_lights, "Lamp Post", a3_v3(base.x, base.y + 3.6f, base.z), a3_v3(0.16f, 7.2f, 0.16f), yaw, "builtin:metal", rgb(0.18f, 0.19f, 0.2f), 0);
-    A3_UNUSED(pole);
+    A3Entity pole = ent(g, "Street Lamp", g->g_lights, base, a3_v3_one(), yaw);
+    A3CMeshRenderer *mr = mesh(g, pole, A3_PRIM_NONE, "builtin:props", rgb(1, 1, 1));
+    a3_strcpy(mr->mesh.path, sizeof(mr->mesh.path), "builtin:street_lamp");
+    A3CCollider *c = (A3CCollider *)a3_component_add(g->w, pole, A3_T_COLLIDER);
+    c->shape = A3_SHAPE_BOX;
+    c->size = a3_v3(0.26f, 7.0f, 0.26f);
+    c->center = a3_v3(0, 3.5f, 0);
     A3Quat q = a3_quat_euler(0, yaw * A3_DEG2RAD, 0);
-    A3Vec3 arm = a3_quat_rotate(q, a3_v3(0, 0, -1.3f));
-    A3Entity lamp = box(g, g->g_lights, "Lamp", a3_v3(base.x + arm.x, base.y + 7.1f, base.z + arm.z), a3_v3(0.5f, 0.12f, 0.9f), yaw, "builtin:neon", rgb(1.0f, 0.78f, 0.5f), 0);
+    A3Vec3 arm = a3_quat_rotate(q, a3_v3(0, 0, -1.48f));
+    A3Entity lamp = ent(g, "Lamp Light", g->g_lights, a3_v3(base.x + arm.x, base.y + 6.8f, base.z + arm.z), a3_v3_one(), yaw);
     A3CLight *l = (A3CLight *)a3_component_add(g->w, lamp, A3_T_LIGHT);
     l->type = A3_LIGHT_POINT;
     l->color = a3_v4(1.0f, 0.72f, 0.45f, 1);
     l->intensity = 14.0f;    /* radiance falls off as 1/(d^2+1) */
     l->range = 22.0f;
     g->st->lights++;
+}
+
+/* Street furniture on a sidewalk point: hydrant, bench or trash can. */
+static void street_prop(Gen *g, A3Vec3 p, f32 yaw_to_road) {
+    static const char *const meshes[3] = { "builtin:hydrant", "builtin:bench", "builtin:trash_can" };
+    static const char *const names[3] = { "Hydrant", "Bench", "Trash Can" };
+    i32 k = ri(g, 0, 2);
+    A3Entity e = ent(g, names[k], g->g_props, p, a3_v3_one(), yaw_to_road);
+    A3CMeshRenderer *mr = mesh(g, e, A3_PRIM_NONE, "builtin:props", rgb(1, 1, 1));
+    a3_strcpy(mr->mesh.path, sizeof(mr->mesh.path), meshes[k]);
+    A3CCollider *c = (A3CCollider *)a3_component_add(g->w, e, A3_T_COLLIDER);
+    c->shape = A3_SHAPE_BOX;
+    c->size = k == 1 ? a3_v3(1.8f, 0.9f, 0.5f) : a3_v3(0.5f, 0.9f, 0.5f);
+    c->center = a3_v3(0, 0.45f, 0);
+    g->st->props++;
+}
+
+/* Four signal poles at an intersection, one per approach. Metallic carries
+ * the phase and Roughness the direction group for builtin:signal. */
+static void signals(Gen *g, f32 x, f32 z, f32 half) {
+    f32 phase = a3_city_signal_phase(x, z);
+    static const f32 dirs[4][2] = { { 0, -1 }, { 0, 1 }, { 1, 0 }, { -1, 0 } };   /* direction of travel into the crossing */
+    for (int i = 0; i < 4; ++i) {
+        f32 dx = dirs[i][0], dz = dirs[i][1];
+        f32 rx = -dz, rz = dx;                                                       /* right of the travel direction */
+        A3Vec3 p = a3_v3(x - dx * (half + 1.6f) + rx * (half + 1.3f), WALK_TOP, z - dz * (half + 1.6f) + rz * (half + 1.3f));
+        f32 yaw = a3_atan2f(-dx, -dz) * A3_RAD2DEG;                                  /* lenses (+Z) face the drivers */
+        A3Entity e = ent(g, "Traffic Signal", g->g_props, p, a3_v3_one(), yaw);
+        A3CMeshRenderer *mr = mesh(g, e, A3_PRIM_NONE, "builtin:signal", rgb(1, 1, 1));
+        a3_strcpy(mr->mesh.path, sizeof(mr->mesh.path), "builtin:traffic_light");
+        mr->metallic = phase;                          /* builtin:signal: phase and direction group */
+        mr->roughness = dx != 0 ? 1.0f : 0.0f;
+        A3CCollider *c = (A3CCollider *)a3_component_add(g->w, e, A3_T_COLLIDER);
+        c->shape = A3_SHAPE_BOX;
+        c->size = a3_v3(0.3f, 5.6f, 0.3f);
+        c->center = a3_v3(0, 2.8f, 0);
+    }
+    a3_array_push(g->signals, node(g, x, z), A3_MEM_WORLD);
 }
 
 static void neon_light(Gen *g, A3Vec3 p, A3Vec4 color, f32 range) {
@@ -132,16 +176,15 @@ static void neon_light(Gen *g, A3Vec3 p, A3Vec4 color, f32 range) {
 }
 
 static void palm(Gen *g, A3Vec3 base, f32 height) {
-    f32 lean = rf(g, -7, 7), yaw = rf(g, 0, 360);
-    A3Entity trunk = ent(g, "Palm", g->g_palms, a3_v3(base.x, base.y + height * 0.5f, base.z), a3_v3(0.36f, height, 0.36f), yaw);
-    A3CTransform *tt = a3_transform(g->w, trunk);
-    tt->rotation = a3_quat_euler(lean * A3_DEG2RAD, yaw * A3_DEG2RAD, 0);
-    mesh(g, trunk, A3_PRIM_CYLINDER, "builtin:palm_trunk", rgb(1, 1, 1));
-    collide(g, trunk, A3_SHAPE_BOX);
-    A3Vec3 top = a3_v3_add(base, a3_quat_rotate(tt->rotation, a3_v3(0, height, 0)));
-    A3Entity crown = ent(g, "Palm Crown", g->g_palms, top, a3_v3s(height * 0.55f), yaw);
-    A3CMeshRenderer *mr = mesh(g, crown, A3_PRIM_NONE, "builtin:foliage", rgb(0.2f + rf(g, 0, 0.08f), 0.42f + rf(g, 0, 0.1f), 0.14f));
-    a3_strcpy(mr->mesh.path, sizeof(mr->mesh.path), "builtin:palm_crown");
+    static const char *const variants[3] = { "builtin:palm_a", "builtin:palm_b", "builtin:palm_c" };
+    f32 yaw = rf(g, 0, 360);
+    A3Entity p = ent(g, "Palm", g->g_palms, base, a3_v3s(height / 9.0f), yaw);
+    A3CMeshRenderer *mr = mesh(g, p, A3_PRIM_NONE, "builtin:palm", rgb(0.3f + rf(g, 0, 0.08f), 0.5f + rf(g, 0, 0.1f), 0.18f));
+    a3_strcpy(mr->mesh.path, sizeof(mr->mesh.path), variants[ri(g, 0, 2)]);
+    A3CCollider *c = (A3CCollider *)a3_component_add(g->w, p, A3_T_COLLIDER);
+    c->shape = A3_SHAPE_BOX;                        /* the trunk (in the palm's unscaled 9 m frame) */
+    c->size = a3_v3(0.5f, 8.0f, 0.5f);
+    c->center = a3_v3(0.3f, 4.0f, 0.0f);
     g->st->palms++;
 }
 
@@ -288,6 +331,14 @@ static void road(Gen *g, A3Vec2 a, A3Vec2 b, f32 width, b32 walks, b32 lights, u
             f32 off = side * (width * 0.5f + 2.0f);
             A3Vec3 wc = along_x ? a3_v3(c.x, (LAND_TOP + WALK_TOP) * 0.5f, c.z + off) : a3_v3(c.x + off, (LAND_TOP + WALK_TOP) * 0.5f, c.z);
             box(g, g->g_roads, "Sidewalk", wc, a3_v3(4.0f, WALK_TOP - LAND_TOP, len), yaw, "builtin:sidewalk", rgb(0.7f, 0.69f, 0.66f), 1);
+            /* a few props along the curb, facing the road */
+            for (f32 t = 0.2f; t < 0.95f; t += 0.3f) {
+                if (!chance(g, 0.45f)) continue;
+                f32 po = side * (width * 0.5f + 0.9f);
+                A3Vec3 pp = along_x ? a3_v3(a3_lerpf(a.x, b.x, t), WALK_TOP, c.z + po) : a3_v3(c.x + po, WALK_TOP, a3_lerpf(a.y, b.y, t));
+                f32 face = along_x ? (side > 0 ? 180.0f : 0.0f) : (side > 0 ? -90.0f : 90.0f);
+                street_prop(g, pp, face);
+            }
         }
     }
     if (lights) {
@@ -318,6 +369,7 @@ static void grid(Gen *g, const Grid *gr, District (*pick)(Gen *g, f32 cx, f32 cz
     for (i32 i = 0; i <= nx; ++i) for (i32 j = 0; j <= nz; ++j) {
         f32 x = gr->x0 + i * gr->sx, z = gr->z0 + j * gr->sz;
         intersection(g, x, z, gr->road);
+        if ((i % 2) == 0 && (j % 2) == 0 && i > 0 && j > 0 && i < nx && j < nz) signals(g, x, z, hw);
         b32 major_x = (j % 3) == 0, major_z = (i % 3) == 0;
         if (i < nx) road(g, a3_v2(x + hw, z), a3_v2(x + gr->sx - hw, z), gr->road, 1, major_x || (i % 2 == 0), major_x ? 2 : 1);
         if (j < nz) road(g, a3_v2(x, z + hw), a3_v2(x, z + gr->sz - hw), gr->road, 1, major_z || (j % 2 == 0), major_z ? 2 : 1);
@@ -578,6 +630,10 @@ b32 a3_city_generate(A3World *w, const A3CityDesc *desc, A3CityStats *stats, A3S
         a3_jw_begin_array(&jw);
         for (u32 i = 0; i < g.nodes.count; ++i) { f32 p[2] = { g.nodes.data[i].x, g.nodes.data[i].y }; a3_jw_floats(&jw, p, 2); }
         a3_jw_end_array(&jw);
+        a3_jw_key(&jw, "signals");
+        a3_jw_begin_array(&jw);
+        for (u32 i = 0; i < g.signals.count; ++i) a3_jw_int(&jw, g.signals.data[i]);
+        a3_jw_end_array(&jw);
         a3_jw_key(&jw, "edges");
         a3_jw_begin_array(&jw);
         for (u32 i = 0; i + 2 < g.edges.count; i += 3) {
@@ -592,6 +648,7 @@ b32 a3_city_generate(A3World *w, const A3CityDesc *desc, A3CityStats *stats, A3S
     w->loading = prev_loading;
     a3_array_free(g.nodes);
     a3_array_free(g.edges);
+    a3_array_free(g.signals);
     a3_hashmap_free(&g.node_map);
     return 1;
 }
@@ -676,4 +733,18 @@ void a3_city_update(A3World *w) {
         A3_INFO("city", "generated Sol Harbor (seed %u): %u objects, %u buildings, %u lights in %.0f ms",
                 c->seed, st.entities, st.buildings, st.lights, (f64)(a3_time_ns() - t0) * 1e-6);
     }
+}
+
+/* ---- traffic signals (shared by builtin:signal and the traffic AI) ---- */
+
+f32 a3_city_signal_phase(f32 x, f32 z) {
+    u64 h = a3_hash_combine((u64)(i64)a3_roundf(x), (u64)(i64)a3_roundf(z) * 7919u);
+    return (f32)(h % 1000u) / 1000.0f;
+}
+
+i32 a3_city_signal_state(f64 time, f32 phase, i32 group) {
+    f64 t = time + (f64)phase * 30.0 + (group ? 15.0 : 0.0);
+    t = t - 30.0 * (f64)(i64)(t / 30.0);
+    if (t < 0) t += 30.0;
+    return t < 12.0 ? 0 : t < 15.0 ? 1 : 2;
 }

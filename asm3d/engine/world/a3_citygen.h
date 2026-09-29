@@ -47,6 +47,13 @@ b32  a3_city_generate(A3World *w, const A3CityDesc *d, A3CityStats *stats, A3Str
 void a3_city_apply_time(A3World *w, A3CityTime t);
 A3CityTime a3_city_time_from_name(const char *name);   /* "day", "sunset", "night" */
 
+/* Traffic signals: a 30 s cycle (12 s green, 3 s amber, 15 s red) offset
+ * per intersection; group 0 = traffic along Z, 1 = along X (starts 15 s
+ * later). The builtin:signal material shows the same cycle from the play
+ * time. State: 0 green, 1 amber, 2 red. */
+f32  a3_city_signal_phase(f32 x, f32 z);
+i32  a3_city_signal_state(f64 time, f32 phase, i32 group);
+
 /* City component: generates the city when the game starts, so a scene can
  * hold a whole city in a few lines. The generated road graph stays in memory
  * for the Traffic component (Roads = "generated"). */

@@ -4,6 +4,7 @@
 #include "a3_traffic.h"
 #include "a3_procmeshes.h"
 #include "a3_citygen.h"
+#include "a3_people.h"
 #include "../physics/a3_vehicle.h"
 #include "../physics/a3_physics.h"
 #include "../scene/a3_components.h"
@@ -31,6 +32,7 @@ void a3_road_graph_free(A3RoadGraph *g) {
     a3_free(g->adj_start);
     a3_free(g->adj);
     a3_free(g->adj_lanes);
+    a3_free(g->signal);
     a3_zero_struct(g);
 }
 
@@ -76,6 +78,9 @@ b32 a3_road_graph_parse(const char *json, usize len, A3RoadGraph *g) {
     a3_free(ea);
     a3_free(el);
     a3_free(fill);
+    g->signal = A3_NEW_ARRAY(u8, n + 1, A3_MEM_WORLD);
+    const A3Json *sig = a3_json_get(root, "signals");
+    if (g->signal && sig) A3_JSON_FOREACH(sn, sig) { u32 k = (u32)a3_json_number(sn, -1); if (k < n) g->signal[k] = 1; }
     a3_arena_release(&arena);
     return 1;
 }
@@ -165,6 +170,7 @@ static GraphCache *graph_for(A3World *w, const char *path) {
 void a3_traffic_register(void) {
     a3_world_on_destroy(cache_release);
     a3_city_register();
+    a3_people_register();
     if (A3_T_TRAFFIC != 0xFFFFFFFFu) return;
     a3_vehicle_register();
     A3CTraffic tr;
@@ -205,12 +211,6 @@ static const A3Vec4 k_paints[] = {
     { 0.95f, 0.75f, 0.1f, 1 }, { 0.2f, 0.75f, 0.75f, 1 }, { 0.6f, 0.62f, 0.65f, 1 }, { 0.95f, 0.45f, 0.65f, 1 },
     { 0.15f, 0.45f, 0.2f, 1 }, { 0.45f, 0.2f, 0.6f, 1 },
 };
-static const A3Vec4 k_shirts[] = {
-    { 0.95f, 0.95f, 0.95f, 1 }, { 0.95f, 0.4f, 0.55f, 1 }, { 0.2f, 0.7f, 0.85f, 1 }, { 0.95f, 0.8f, 0.2f, 1 },
-    { 0.1f, 0.1f, 0.12f, 1 }, { 0.4f, 0.8f, 0.4f, 1 }, { 0.9f, 0.5f, 0.2f, 1 }, { 0.55f, 0.35f, 0.8f, 1 },
-};
-static const A3Vec4 k_skins[] = { { 0.95f, 0.78f, 0.62f, 1 }, { 0.8f, 0.58f, 0.42f, 1 }, { 0.55f, 0.38f, 0.26f, 1 }, { 0.36f, 0.24f, 0.16f, 1 } };
-
 static A3Vec3 v2to3(A3Vec2 p, f32 y) { return a3_v3(p.x, y, p.y); }
 
 static A3Vec2 edge_dir(const A3RoadGraph *g, u32 a, u32 b) {
@@ -235,29 +235,7 @@ static u32 pick_next(const A3RoadGraph *g, A3Rng *rng, u32 from, u32 at) {
 }
 
 static A3Entity spawn_pedestrian(A3World *w, A3Vec3 pos, A3Rng *rng) {
-    A3Entity e = a3_entity_create(w, "Pedestrian");
-    A3CTransform *t = (A3CTransform *)a3_component_add(w, e, A3_T_TRANSFORM);
-    t->position = pos;
-    f32 h = a3_rng_range_f32(rng, 0.9f, 1.08f);
-    A3Entity body = a3_entity_create(w, "Body");
-    A3CTransform *bt = (A3CTransform *)a3_component_add(w, body, A3_T_TRANSFORM);
-    bt->position = a3_v3(0, 0.78f * h, 0);
-    bt->scale = a3_v3(0.46f, 0.78f * h, 0.34f);
-    a3_entity_set_parent(w, body, e);
-    A3CMeshRenderer *mr = (A3CMeshRenderer *)a3_component_add(w, body, A3_T_MESH_RENDERER);
-    mr->primitive = A3_PRIM_CAPSULE;
-    mr->base_color = k_shirts[a3_rng_range_u32(rng, A3_ARRAY_COUNT(k_shirts))];
-    mr->roughness = 0.8f;
-    A3Entity head = a3_entity_create(w, "Head");
-    A3CTransform *ht = (A3CTransform *)a3_component_add(w, head, A3_T_TRANSFORM);
-    ht->position = a3_v3(0, 1.62f * h, 0);
-    ht->scale = a3_v3s(0.24f);
-    a3_entity_set_parent(w, head, e);
-    mr = (A3CMeshRenderer *)a3_component_add(w, head, A3_T_MESH_RENDERER);
-    mr->primitive = A3_PRIM_SPHERE;
-    mr->base_color = k_skins[a3_rng_range_u32(rng, A3_ARRAY_COUNT(k_skins))];
-    mr->roughness = 0.7f;
-    return e;
+    return a3_person_spawn(w, "Pedestrian", pos, 0, ((u64)a3_rng_u32(rng) << 32) | a3_rng_u32(rng));   /* jointed body, walk cycle (a3_people.c) */
 }
 
 static b32 spot_free(A3World *w, A3Vec3 p, f32 min_dist) {
@@ -326,7 +304,12 @@ static void spawn_all(A3World *w, A3CTraffic *tr, GraphCache *gc, A3Entity manag
             if (kind == KIND_CAR) {
                 char name[32];
                 a3_snprintf(name, sizeof(name), "Traffic Car %d", made + 1);
-                e = a3_vehicle_spawn_car(w, name, p, yaw, k_paints[a3_rng_range_u32(&rng, A3_ARRAY_COUNT(k_paints))]);
+                /* a realistic mix: sedans, SUVs, hatchbacks, a few sports cars and yellow taxis */
+                f32 pick = a3_rng_f32(&rng);
+                const char *style = pick < 0.34f ? "sedan" : pick < 0.6f ? "suv" : pick < 0.8f ? "hatch" : pick < 0.88f ? "sports" : "taxi";
+                A3Vec4 paint = k_paints[a3_rng_range_u32(&rng, A3_ARRAY_COUNT(k_paints))];
+                if (a3_streq(style, "taxi")) paint = a3_v4(1.0f, 0.74f, 0.05f, 1);
+                e = a3_vehicle_spawn_car_style(w, name, p, yaw, paint, style);
                 A3CVehicle *v = (A3CVehicle *)a3_component_get(w, e, A3_T_VEHICLE);
                 v->ground_probe = 0;
                 v->collide_world = 0;
@@ -385,7 +368,7 @@ static void advance(const A3RoadGraph *g, A3Rng *rng, A3CTrafficAgent *ag) {
 }
 
 static void drive_car(A3World *w, const A3RoadGraph *g, A3Rng *rng, A3Entity e, A3CTrafficAgent *ag, A3CVehicle *v,
-                      const A3CTraffic *tr, const Obstacle *obs, u32 nobs, f32 dt) {
+                      const A3CTraffic *tr, const Obstacle *obs, u32 nobs, f32 dt, f64 time) {
     A3CTransform *t = a3_transform(w, e);
     if (!t || (u32)ag->from >= g->node_count || (u32)ag->to >= g->node_count || (u32)ag->next >= g->node_count) return;
     u32 a = (u32)ag->from, b = (u32)ag->to, c = (u32)ag->next;
@@ -430,6 +413,16 @@ static void drive_car(A3World *w, const A3RoadGraph *g, A3Rng *rng, A3Entity e, 
         }
     } else ag->ignore -= dt;
     if (gap < 1e8f) want = a3_minf(want, a3_maxf((gap - 6.5f) * 0.8f, 0.0f));
+    /* traffic signals at the next intersection: stop at the line on red (and on amber when there is room) */
+    if (ag->stage == 0 && g->signal && g->signal[b]) {
+        f32 to_line = (len - stop - 1.0f) - s;
+        if (to_line > -0.5f && to_line < 45.0f) {
+            i32 group = a3_absf(d1.x) > a3_absf(d1.y) ? 1 : 0;
+            i32 state = a3_city_signal_state(time, a3_city_signal_phase(g->nodes[b].x, g->nodes[b].y), group);
+            if (state == 2 || (state == 1 && to_line > 8.0f + v->speed * 0.3f))
+                want = a3_minf(want, a3_maxf((to_line - 1.0f) * 0.55f, 0.0f));
+        }
+    }
     f32 err = want - v->speed;
     v->throttle = err > 0 ? a3_clampf(err * 0.35f, 0, 1) : a3_clampf(err * 0.5f, -1, 0);
     if (want < 0.1f && v->speed < 0.5f) v->throttle = 0;
@@ -466,11 +459,10 @@ static void walk_ped(A3World *w, const A3RoadGraph *g, A3Rng *rng, A3Entity e, A
         f32 yaw = a3_atan2f(-dd.x, -dd.y);
         t->rotation = a3_quat_slerp(t->rotation, a3_quat_axis_angle(a3_v3(0, 1, 0), yaw), a3_minf(1.0f, dt * 8.0f));
     }
-    ag->phase += dt * ag->speed * 5.5f;
-    t->position.y = g->walk_y + a3_absf(a3_sinf(ag->phase)) * 0.05f;
+    t->position.y = g->walk_y;      /* the Person component animates the body from this motion */
 }
 
-void a3_traffic_update(A3World *w, f32 dt) {
+void a3_traffic_update(A3World *w, f32 dt, f64 time) {
     if (A3_T_TRAFFIC == 0xFFFFFFFFu || dt <= 0) return;
     u32 nm = 0;
     const A3Entity *mgrs = 0;
@@ -506,7 +498,7 @@ void a3_traffic_update(A3World *w, f32 dt) {
             if (!ag) continue;
             if (ag->kind == KIND_CAR) {
                 A3CVehicle *v = (A3CVehicle *)a3_component_get(w, e, A3_T_VEHICLE);
-                if (v && !v->use_input) drive_car(w, &gc->g, rng, e, ag, v, tr, obs, no, dt);
+                if (v && !v->use_input) drive_car(w, &gc->g, rng, e, ag, v, tr, obs, no, dt, time);
             } else {
                 walk_ped(w, &gc->g, rng, e, ag, dt);
             }

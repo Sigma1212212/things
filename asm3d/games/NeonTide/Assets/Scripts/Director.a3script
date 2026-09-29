@@ -66,15 +66,14 @@ fn start_chase() {
     if hero == nil { return }
     hero.Vehicle.max_speed = 40
     let behind = hero.position - hero.forward * 16
-    cop = spawn_car("Police Car", behind, hero.rotation.y, vec3(0.05, 0.06, 0.09))
+    cop = spawn_car("Police Car", behind, hero.rotation.y, vec3(0.05, 0.06, 0.09), "police")
     cop.Vehicle.ground_probe = false
     cop.Vehicle.collide_world = false
     cop.Vehicle.max_speed = 45
     cop.Vehicle.acceleration = 16
-    cop_bar = clone(find("Lightbar Template"), behind)
+    cop_bar = spawn("Siren", behind)       // the police model flashes its own light bar; this light colors the street
     cop_bar.parent = cop
-    cop_bar.local_position = vec3(0, 1.52, 0.3)
-    cop_bar.active = true
+    cop_bar.local_position = vec3(0, 1.8, -0.4)
     add_component(cop_bar, "Light")
     cop_bar.Light.type = "Point"
     cop_bar.Light.range = 14
@@ -104,7 +103,6 @@ fn drive_cop(dt) {
     // siren colors
     let on = floor(time() * 7) % 2 == 0
     let col = on and vec3(1, 0.05, 0.05) or vec3(0.05, 0.25, 1)
-    cop_bar.MeshRenderer.base_color = col
     cop_bar.Light.color = col
 }
 

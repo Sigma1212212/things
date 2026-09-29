@@ -4,6 +4,8 @@
 #include "a3_test.h"
 #include "../engine/world/a3_citygen.h"
 #include "../engine/world/a3_procmeshes.h"
+#include "../engine/world/a3_geom_kernels.h"
+#include "../engine/core/a3_hash.h"
 #include "../engine/world/a3_traffic.h"
 #include "../engine/physics/a3_vehicle.h"
 #include "../engine/scene/a3_components.h"
@@ -23,7 +25,7 @@ static void setup(void) {
 A3_TEST(world_procedural_meshes) {
     setup();
     a3_procmeshes_register();
-    A3_CHECK_EQ_INT(a3_procmeshes_count(), 4);
+    A3_CHECK(a3_procmeshes_count() >= 25);
     for (u32 i = 0; i < a3_procmeshes_count(); ++i) {
         const char *name = a3_procmeshes_name(i);
         A3_CHECK(a3_assets_has_mesh_generator(name));
@@ -32,7 +34,7 @@ A3_TEST(world_procedural_meshes) {
         A3_CHECK_MSG(m && m->state == A3_ASSET_STATE_LOADED && a3_streq(m->path, name), "procedural mesh %s did not build", name);
         if (!m) continue;
         A3_CHECK(m->cpu.index_count >= 36 && m->cpu.index_count % 3 == 0);
-        A3_CHECK(m->radius > 0.05f && m->radius < 5.0f);
+        A3_CHECK(m->radius > 0.05f && m->radius < 12.0f);
         A3_CHECK_EQ_INT(a3_assets_mesh(name), id);     /* cached */
     }
     /* the car sits on the ground and faces -Z */
@@ -45,14 +47,14 @@ A3_TEST(world_city_generation) {
     setup();
     A3CityDesc d;
     a3_city_desc_default(&d);
-    d.density = 0.3f;
+    d.density = 0.6f;
     d.seed = 42;
     A3World *w = a3_world_create("city");
     A3StrBuf roads;
     a3_strbuf_init(&roads, A3_MEM_TEMP);
     A3CityStats st;
     A3_CHECK(a3_city_generate(w, &d, &st, &roads));
-    A3_CHECK(st.buildings > 100 && st.towers > 5 && st.hotels > 3 && st.palms > 100 && st.lights > 100);
+    A3_CHECK(st.buildings > 100 && st.towers > 5 && st.hotels > 3 && st.palms > 100 && st.lights > 100 && st.props > 200);
     A3_CHECK(a3_world_entity_count(w) > 2000);
     A3_CHECK(st.road_nodes > 200 && st.road_edges > st.road_nodes);
     /* the road graph parses and is (almost entirely) one connected network */
@@ -111,10 +113,12 @@ static A3Entity ground_box(A3World *w, const char *name, A3Vec3 pos, A3Vec3 size
     return e;
 }
 
+static f64 g_step_time;
 static void step_world(A3World *w, u32 steps) {
     for (u32 i = 0; i < steps; ++i) {
+        g_step_time += 1.0 / 60.0;
         a3_city_update(w);
-        a3_traffic_update(w, 1.0f / 60.0f);
+        a3_traffic_update(w, 1.0f / 60.0f, g_step_time);
         a3_vehicle_update_all(w, 1.0f / 60.0f);
         a3_transform_system_update(w);
     }
@@ -195,4 +199,62 @@ A3_TEST(world_traffic_follows_roads) {
     A3_CHECK(a3_traffic_random_road_point(w, a3_v3_zero(), 100, 300, &rp, 0));
     A3_CHECK(a3_sqrtf(rp.x * rp.x + rp.z * rp.z) >= 99.0f && a3_sqrtf(rp.x * rp.x + rp.z * rp.z) <= 301.0f);
     a3_world_destroy(w);
+}
+
+static b32 same_bits(const void *a, const void *b, usize n) { return a3_memcmp(a, b, n) == 0; }
+
+A3_TEST(world_geometry_kernels_bit_exact) {
+    A3Rng rng;
+    a3_rng_seed(&rng, 99, 1);
+    /* Catmull-Rom: closed and open */
+    A3Vec2 ctrl[17], o1[17 * 7 + 1], o2[17 * 7 + 1];
+    for (u32 i = 0; i < 17; ++i) ctrl[i] = a3_v2(a3_rng_range_f32(&rng, -5, 5), a3_rng_range_f32(&rng, -5, 5));
+    for (u32 closed = 0; closed < 2; ++closed) {
+        a3_memset(o1, 0, sizeof(o1)); a3_memset(o2, 0, sizeof(o2));
+        u32 n1 = a3_gk_catmull_rom(ctrl, 17, 7, closed, o1), n2 = a3_gk_ref_catmull_rom(ctrl, 17, 7, closed, o2);
+        A3_CHECK(n1 == n2 && n1 == (closed ? 17u * 7u : 16u * 7u + 1u));
+        A3_CHECK(same_bits(o1, o2, sizeof(A3Vec2) * n1));
+    }
+    A3_CHECK(o1[0].x == ctrl[0].x && o1[7].y == ctrl[1].y);     /* passes through the control points */
+    /* frame placement into a strided vertex array */
+    A3Vertex v1[41], v2[41];
+    a3_memset(v1, 0, sizeof(v1)); a3_memset(v2, 0, sizeof(v2));
+    f32 frame[12];
+    for (u32 i = 0; i < 12; ++i) frame[i] = (i % 4 == 3) ? 0.0f : a3_rng_range_f32(&rng, -2, 2);
+    a3_gk_frame_points(o1, 41, frame, &v1[0].position, sizeof(A3Vertex));
+    a3_gk_ref_frame_points(o1, 41, frame, &v2[0].position, sizeof(A3Vertex));
+    A3_CHECK(same_bits(v1, v2, sizeof(v1)));
+    /* grid indices */
+    u32 i1[6 * 8 * 6], i2[6 * 8 * 6];
+    for (u32 wrap = 0; wrap < 2; ++wrap) {
+        u32 a = a3_gk_grid_indices(6, 8, wrap, 5, i1), b = a3_gk_ref_grid_indices(6, 8, wrap, 5, i2);
+        A3_CHECK(a == b && a == 5u * (wrap ? 8u : 7u) * 6u && same_bits(i1, i2, a * 4));
+    }
+    /* normals and volume on a random closed-ish surface */
+    A3Vertex g1[48], g2[48];
+    for (u32 i = 0; i < 48; ++i) {
+        g1[i].position = a3_v3(a3_rng_range_f32(&rng, -3, 3), a3_rng_range_f32(&rng, -3, 3), a3_rng_range_f32(&rng, -3, 3));
+        g1[i].normal = a3_v3_zero();
+        g1[i].uv = a3_v2(0, 0);
+    }
+    g1[47].position = g1[46].position;   /* a degenerate triangle -> zero normal -> (0,1,0) */
+    a3_memcpy(g2, g1, sizeof(g1));
+    u32 tris = a3_gk_grid_indices(6, 8, 1, 0, i1) / 3;
+    a3_gk_vertex_normals(g1, i1, tris);
+    a3_gk_ref_vertex_normals(g2, i1, tris);
+    A3_CHECK(same_bits(g1, g2, sizeof(g1)));
+    g1[3].normal = g2[3].normal = a3_v3_zero();
+    a3_gk_normalize(g1, 48);
+    a3_gk_ref_normalize(g2, 48);
+    A3_CHECK(same_bits(g1, g2, sizeof(g1)));
+    A3_CHECK(g1[3].normal.y == 1.0f && g1[3].normal.x == 0.0f);
+    f32 va = a3_gk_signed_volume(g1, i1, tris), vb = a3_gk_ref_signed_volume(g1, i1, tris);
+    A3_CHECK(same_bits(&va, &vb, 4));
+    /* a unit cube from the car builder's point of view: outward winding is positive */
+    A3MeshData cube;
+    A3_CHECK(a3_mesh_cube(&cube));
+    A3Vertex *cv = cube.vertices;
+    A3_CHECK(a3_gk_signed_volume(cv, cube.indices, cube.index_count / 3) > 0.0f);
+    a3_mesh_free(&cube);
+    A3_CHECK(a3_strlen(a3_gk_backend()) > 0);
 }

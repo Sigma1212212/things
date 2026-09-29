@@ -106,6 +106,28 @@
     mov     r9, qword ptr A3_WIN_ARG(7)
 .endm
 
+/* (p, u32, u32, u32, p) -> rdi, esi, edx, ecx, r8 */
+.macro ARGS_PIIIP
+    mov     rdi, rcx
+    mov     esi, edx
+    mov     edx, r8d
+    mov     ecx, r9d
+    mov     r8, qword ptr A3_WIN_ARG(5)
+.endm
+/* (p, u32, p, p, u32) -> rdi, esi, rdx, rcx, r8d */
+.macro ARGS_PIPPI
+    ARGS_PPPP
+    mov     r8d, dword ptr A3_WIN_ARG(5)
+.endm
+/* (u32, u32, u32, u32, p) -> edi, esi, edx, ecx, r8 */
+.macro ARGS_IIIIP
+    mov     edi, ecx
+    mov     esi, edx
+    mov     edx, r8d
+    mov     ecx, r9d
+    mov     r8, qword ptr A3_WIN_ARG(5)
+.endm
+
 #define A3_ASM_FUNC(name, shuffle) \
     .globl name ; .p2align 4 ; name: ; WIN64_SAVE ; shuffle ; call name##_sysv ; WIN64_RESTORE_RET ; \
     .p2align 4 ; name##_sysv:

@@ -63,7 +63,7 @@ set(A3_ENGINE_SOURCES
   engine/jobs/a3_jobs.c
 )
 if(A3_USE_ASM_ACTIVE)
-  list(APPEND A3_ENGINE_SOURCES engine/core/a3_simd_x64.S engine/physics/a3_physics_x64.S engine/audio/a3_audio_x64.S engine/particles/a3_particles_x64.S engine/modeling/a3_modeling_x64.S)
+  list(APPEND A3_ENGINE_SOURCES engine/core/a3_simd_x64.S engine/physics/a3_physics_x64.S engine/audio/a3_audio_x64.S engine/particles/a3_particles_x64.S engine/modeling/a3_modeling_x64.S engine/world/a3_geom_x64.S)
 endif()
 
 add_library(asm3d_engine STATIC ${A3_ENGINE_SOURCES})

@@ -49,7 +49,7 @@ typedef struct A3CTrafficAgent {
 
 void a3_traffic_register(void);
 /* Spawns (first call) and drives all traffic in the world. */
-void a3_traffic_update(A3World *w, f32 dt);
+void a3_traffic_update(A3World *w, f32 dt, f64 time);   /* time: play time (signal cycle) */
 
 /* Road graph access (loaded by the Traffic component; for tests and tools). */
 typedef struct A3RoadGraph {
@@ -58,6 +58,7 @@ typedef struct A3RoadGraph {
     u32 *adj_start;         /* node_count + 1 */
     u32 *adj;               /* neighbor node indices */
     u8 *adj_lanes;
+    u8 *signal;             /* per node: 1 = traffic signals */
     f32 road_y, walk_y, half_width;
 } A3RoadGraph;
 

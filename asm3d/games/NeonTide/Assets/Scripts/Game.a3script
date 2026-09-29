@@ -49,7 +49,7 @@ fn on_start() {
     cash = load_value("cash", 0)
     best_streak = load_value("best_streak", 0)
     // the player's car: parked on the beachfront drive next to the start
-    hero = spawn_car("Hero Car", vec3(403, 0.5, 52), 0, vec3(1.0, 0.18, 0.55))
+    hero = spawn_car("Hero Car", vec3(403, 0.5, 52), 0, vec3(1.0, 0.18, 0.55), "sports")
     traffic = find_all("Traffic Car")
     t_start = time()
     if checkpoint != nil { checkpoint.active = false }
@@ -167,15 +167,18 @@ fn add_heat(amount) {
 fn spawn_cop() {
     let p = road_point(player_pos(), 140, 260)
     if p == nil { return }
-    let c = spawn_car("Police Car", p, random(0, 360), vec3(0.06, 0.07, 0.1))
+    let c = spawn_car("Police Car", p, random(0, 360), vec3(0.06, 0.07, 0.1), "police")
     c.Vehicle.max_speed = 50 + floor(heat) * 3
     c.Vehicle.acceleration = 13
     c.Vehicle.grip = 0.9
-    // light bar
-    let bar = clone(find("Lightbar Template"), p)
+    // the police model has its own flashing light bar; add a colored light that flashes with it
+    let bar = spawn("Siren", p)
     bar.parent = c
-    bar.local_position = vec3(0, 1.52, 0.3)
-    bar.active = true
+    bar.local_position = vec3(0, 1.8, -0.4)
+    add_component(bar, "Light")
+    bar.Light.type = "Point"
+    bar.Light.range = 14
+    bar.Light.intensity = 6
     push(cop_bars, bar)
     push(cops, c)
     push(cop_stuck, 0)
@@ -233,7 +236,7 @@ fn update_police(dt) {
     siren_phase += dt * 6
     let on = floor(siren_phase) % 2 == 0
     for bar in cop_bars {
-        if exists(bar) { bar.MeshRenderer.base_color = on and vec3(1, 0.05, 0.05) or vec3(0.05, 0.2, 1) }
+        if exists(bar) { bar.Light.color = on and vec3(1, 0.05, 0.05) or vec3(0.05, 0.25, 1) }
     }
     if stars >= 1 {
         let speed = 0

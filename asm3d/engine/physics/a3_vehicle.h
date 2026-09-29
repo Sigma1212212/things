@@ -79,10 +79,12 @@ void a3_vehicle_update_camera(A3World *w, A3Entity vehicle, const A3CVehicle *v,
 /* The active player-controlled vehicle, if any. */
 A3Entity a3_vehicle_find_player(A3World *w);
 
-/* Builds a complete car (body, cabin glass, wheels, head and tail lights,
- * collider, kinematic body, Vehicle) at a ground position facing yaw
- * (degrees, 0 = -Z). Returns the root entity. */
+/* Builds a complete car (smooth body with glass and lights, four detailed
+ * wheels, a headlight spot light, collider, kinematic body, Vehicle) at a
+ * ground position facing yaw (degrees, 0 = -Z). Returns the root entity. */
 A3Entity a3_vehicle_spawn_car(A3World *w, const char *name, A3Vec3 ground_pos, f32 yaw_deg, A3Vec4 paint);
+/* style: "sedan", "sports", "suv", "hatch", "taxi" or "police" (builtin:car_<style>). */
+A3Entity a3_vehicle_spawn_car_style(A3World *w, const char *name, A3Vec3 ground_pos, f32 yaw_deg, A3Vec4 paint, const char *style);
 
 A3_EXTERN_C_END
 

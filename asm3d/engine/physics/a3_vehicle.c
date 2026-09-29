@@ -7,6 +7,8 @@
 #include "../scene/a3_components.h"
 #include "../core/a3_string.h"
 #include "../core/a3_log.h"
+#include "../core/a3_format.h"
+#include "../world/a3_procmeshes.h"
 
 u32 A3_T_VEHICLE = 0xFFFFFFFFu;
 
@@ -123,8 +125,10 @@ static void spin_wheels(A3World *w, A3Entity e, const A3CVehicle *v) {
         if (!a3_str_starts_with(name, "Wheel")) continue;
         A3CTransform *t = a3_transform(w, c);
         if (!t) continue;
-        b32 front = t->position.z < 0;
-        A3Quat spin = a3_quat_axis_angle(a3_v3(1, 0, 0), -v->wheel_angle);
+        b32 front = t->position.z < 0, left = t->position.x < 0;
+        /* left wheels are turned around (rim face outward), so they spin the other way in local space */
+        A3Quat spin = left ? a3_quat_mul(a3_quat_axis_angle(a3_v3(0, 1, 0), A3_PI), a3_quat_axis_angle(a3_v3(1, 0, 0), v->wheel_angle))
+                           : a3_quat_axis_angle(a3_v3(1, 0, 0), -v->wheel_angle);
         t->rotation = front ? a3_quat_mul(a3_quat_axis_angle(a3_v3(0, 1, 0), -v->steer_current), spin) : spin;
     }
 }
@@ -258,11 +262,33 @@ void a3_vehicle_step(A3World *w, A3Entity e, A3CVehicle *v, f32 dt) {
     spin_wheels(w, e, v);
 }
 
+/* 0 by day .. 1 at night, from the brightest directional light (the sun) */
+static f32 night_factor(A3World *w) {
+    u32 n = 0;
+    const A3Entity *ents = 0;
+    const A3CLight *ls = (const A3CLight *)a3_component_array(w, A3_T_LIGHT, &n, &ents);
+    f32 sun = 0;
+    for (u32 i = 0; i < n; ++i)
+        if (ls[i].type == A3_LIGHT_DIRECTIONAL && a3_entity_active(w, ents[i]))
+            sun = a3_maxf(sun, ls[i].intensity * (ls[i].color.x + ls[i].color.y + ls[i].color.z) / 3.0f);
+    return 1.0f - a3_smoothstep(0.15f, 0.8f, sun);
+}
+
+static void set_headlights(A3World *w, A3Entity car, f32 night) {
+    for (A3Entity c = a3_entity_first_child(w, car); a3_entity_valid(w, c); c = a3_entity_next_sibling(w, c)) {
+        if (!a3_streq(a3_entity_name(w, c), "Headlights")) continue;
+        A3CLight *l = (A3CLight *)a3_component_get(w, c, A3_T_LIGHT);
+        if (l) l->intensity = 22.0f * night;     /* daytime running lights do not light the road */
+    }
+}
+
 void a3_vehicle_update_all(A3World *w, f32 dt) {
     if (A3_T_VEHICLE == 0xFFFFFFFFu) return;
     u32 n = 0;
     const A3Entity *ents = 0;
+    f32 night = night_factor(w);
     a3_component_array(w, A3_T_VEHICLE, &n, &ents);
+    for (u32 i = 0; i < n; ++i) set_headlights(w, ents[i], night);
     for (u32 i = 0; i < n; ++i) {
         A3Entity e = ents[i];
         if (!a3_entity_active(w, e)) continue;
@@ -321,8 +347,12 @@ static A3Entity part(A3World *w, A3Entity parent, const char *name, A3Vec3 pos, 
     return e;
 }
 
-A3Entity a3_vehicle_spawn_car(A3World *w, const char *name, A3Vec3 ground_pos, f32 yaw_deg, A3Vec4 paint) {
+A3Entity a3_vehicle_spawn_car_style(A3World *w, const char *name, A3Vec3 ground_pos, f32 yaw_deg, A3Vec4 paint, const char *style) {
     a3_vehicle_register();
+    char mesh[64];
+    a3_snprintf(mesh, sizeof(mesh), "builtin:car_%s", style && *style ? style : "sedan");
+    f32 wb, track, wr, len, width, height;
+    a3_procmodels_car_info(mesh, &wb, &track, &wr, &len, &width, &height);
     A3Entity car = a3_entity_create(w, name ? name : "Car");
     A3CTransform *t = (A3CTransform *)a3_component_add(w, car, A3_T_TRANSFORM);
     t->position = ground_pos;
@@ -330,27 +360,40 @@ A3Entity a3_vehicle_spawn_car(A3World *w, const char *name, A3Vec3 ground_pos, f
     A3CMeshRenderer *mr = (A3CMeshRenderer *)a3_component_add(w, car, A3_T_MESH_RENDERER);
     mr->primitive = A3_PRIM_NONE;
     mr->base_color = paint;
-    a3_strcpy(mr->mesh.path, sizeof(mr->mesh.path), "builtin:car_body");
-    a3_strcpy(mr->material.path, sizeof(mr->material.path), "builtin:carpaint");
+    a3_strcpy(mr->mesh.path, sizeof(mr->mesh.path), mesh);
+    a3_strcpy(mr->material.path, sizeof(mr->material.path), "builtin:carbody");
     A3CCollider *c = (A3CCollider *)a3_component_add(w, car, A3_T_COLLIDER);
     c->shape = A3_SHAPE_BOX;
-    c->size = a3_v3(1.8f, 1.15f, 4.4f);
-    c->center = a3_v3(0, 0.86f, 0);
+    c->size = a3_v3(width, height - 0.2f, len);
+    c->center = a3_v3(0, 0.2f + (height - 0.2f) * 0.5f, 0);
     A3CRigidBody *rb = (A3CRigidBody *)a3_component_add(w, car, A3_T_RIGIDBODY);
     rb->type = A3_BODY_KINEMATIC;
     rb->mass = 1300.0f;
     rb->lock_rotation = 1;
     rb->gravity_scale = 0;
-    a3_component_add(w, car, A3_T_VEHICLE);
-    part(w, car, "Cabin", a3_v3_zero(), a3_v3_one(), "builtin:car_glass", A3_PRIM_NONE, "builtin:glass", a3_v4(0.25f, 0.3f, 0.36f, 1));
-    static const f32 wx = 0.8f, wz = 1.35f;
-    const f32 pos[4][2] = { { -wx, -wz }, { wx, -wz }, { -wx, wz }, { wx, wz } };
-    static const char *const names[4] = { "Wheel FL", "Wheel FR", "Wheel RL", "Wheel RR" };
-    for (int i = 0; i < 4; ++i)
-        part(w, car, names[i], a3_v3(pos[i][0], 0.34f, pos[i][1]), a3_v3_one(), "builtin:wheel", A3_PRIM_NONE, 0, a3_v4(0.06f, 0.06f, 0.07f, 1));
-    for (int s = -1; s <= 1; s += 2) {
-        part(w, car, "Headlight", a3_v3(s * 0.6f, 0.68f, -2.21f), a3_v3(0.38f, 0.12f, 0.04f), 0, A3_PRIM_CUBE, "builtin:neon", a3_v4(1.0f, 0.95f, 0.85f, 1));
-        part(w, car, "Taillight", a3_v3(s * 0.62f, 0.74f, 2.21f), a3_v3(0.36f, 0.1f, 0.04f), 0, A3_PRIM_CUBE, "builtin:neon", a3_v4(1.0f, 0.05f, 0.03f, 1));
+    A3CVehicle *v = (A3CVehicle *)a3_component_add(w, car, A3_T_VEHICLE);
+    if (v) {
+        v->wheelbase = wb;
+        v->wheel_radius = wr;
+        v->body_size = a3_v3(width, height - 0.3f, len);
     }
+    static const char *const names[4] = { "Wheel FL", "Wheel FR", "Wheel RL", "Wheel RR" };
+    for (int i = 0; i < 4; ++i) {
+        f32 x = (i & 1) ? track : -track, z = i < 2 ? -wb * 0.5f : wb * 0.5f;
+        A3Entity wh = part(w, car, names[i], a3_v3(x, wr, z), a3_v3s(wr), "builtin:wheel_detailed", A3_PRIM_NONE, "builtin:wheel", a3_v4(1, 1, 1, 1));
+        if (x < 0) a3_transform(w, wh)->rotation = a3_quat_axis_angle(a3_v3(0, 1, 0), A3_PI);  /* rim face outward */
+    }
+    /* headlights: one spot light lighting the road ahead */
+    A3Entity hl = a3_entity_create(w, "Headlights");
+    A3CTransform *ht = (A3CTransform *)a3_component_add(w, hl, A3_T_TRANSFORM);
+    ht->position = a3_v3(0, 0.75f, -len * 0.5f - 0.1f);
+    ht->rotation = a3_quat_axis_angle(a3_v3(1, 0, 0), -8.0f * A3_DEG2RAD);
+    a3_entity_set_parent(w, hl, car);
+    A3CLight *l = (A3CLight *)a3_component_add(w, hl, A3_T_LIGHT);
+    if (l) { l->type = A3_LIGHT_SPOT; l->color = a3_v4(1.0f, 0.93f, 0.82f, 1); l->intensity = 22.0f * night_factor(w); l->range = 32.0f; l->spot_angle = 64.0f; }
     return car;
+}
+
+A3Entity a3_vehicle_spawn_car(A3World *w, const char *name, A3Vec3 ground_pos, f32 yaw_deg, A3Vec4 paint) {
+    return a3_vehicle_spawn_car_style(w, name, ground_pos, yaw_deg, paint, "sedan");
 }

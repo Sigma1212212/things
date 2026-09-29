@@ -154,9 +154,15 @@ static const ProcMesh k_meshes[] = {
     { "builtin:wheel", gen_wheel },
 };
 
+/* detailed models live in a3_procmodels.c */
+u32 a3__procmodels_count(void);
+const char *a3__procmodels_name(u32 i);
+void *a3__procmodels_fn(u32 i);
+
 void a3_procmeshes_register(void) {
     for (u32 i = 0; i < A3_ARRAY_COUNT(k_meshes); ++i) a3_assets_register_mesh_generator(k_meshes[i].name, k_meshes[i].fn);
+    for (u32 i = 0; i < a3__procmodels_count(); ++i) a3_assets_register_mesh_generator(a3__procmodels_name(i), (A3MeshGenerator)a3__procmodels_fn(i));
 }
 
-u32 a3_procmeshes_count(void) { return (u32)A3_ARRAY_COUNT(k_meshes); }
-const char *a3_procmeshes_name(u32 i) { return i < A3_ARRAY_COUNT(k_meshes) ? k_meshes[i].name : ""; }
+u32 a3_procmeshes_count(void) { return (u32)A3_ARRAY_COUNT(k_meshes) + a3__procmodels_count(); }
+const char *a3_procmeshes_name(u32 i) { return i < A3_ARRAY_COUNT(k_meshes) ? k_meshes[i].name : a3__procmodels_name(i - (u32)A3_ARRAY_COUNT(k_meshes)); }

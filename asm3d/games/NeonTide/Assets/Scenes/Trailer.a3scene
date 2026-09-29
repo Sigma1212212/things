@@ -5,7 +5,7 @@
   "name": "Scene",
   "entities": [
     {
-      "guid": "80a072d8c9127b2a",
+      "guid": "95b03388c6db96d7",
       "name": "World Settings",
       "components": {
         "Transform": {
@@ -38,7 +38,7 @@
       }
     },
     {
-      "guid": "e2cfc4c48b2c3e56",
+      "guid": "e8eff8bcf596ee47",
       "name": "Sun",
       "components": {
         "Transform": {
@@ -57,7 +57,7 @@
       }
     },
     {
-      "guid": "161b84f5f7027248",
+      "guid": "c6c13179ad7b23b1",
       "name": "Sol Harbor",
       "components": {
         "Transform": {
@@ -75,7 +75,7 @@
       }
     },
     {
-      "guid": "6efe8e16ebbd3fe3",
+      "guid": "89a2f8f686948f5f",
       "name": "City Traffic",
       "components": {
         "Transform": {
@@ -94,7 +94,7 @@
       }
     },
     {
-      "guid": "3a8e4c2b5db8b61d",
+      "guid": "6715d2e1d6b50514",
       "name": "Main Camera",
       "components": {
         "Transform": {
@@ -116,7 +116,7 @@
       }
     },
     {
-      "guid": "116cbe3d5d7cf68c",
+      "guid": "f91fea49921202e1",
       "name": "Lightbar Template",
       "active": false,
       "components": {
@@ -141,7 +141,7 @@
       }
     },
     {
-      "guid": "457c8338dbab45a8",
+      "guid": "4ccd00c02f55674a",
       "name": "Director",
       "components": {
         "Transform": {

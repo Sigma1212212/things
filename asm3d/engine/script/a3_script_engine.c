@@ -824,7 +824,13 @@ NATIVE(n_spawn_car) {
     if (n > 1 && !a3s_arg_vec3(vm, a, 1, &p)) return 0;
     if (n > 2 && !a3s_arg_num(vm, a, 2, &yaw)) return 0;
     if (n > 3 && !a3s_arg_vec3(vm, a, 3, &col)) return 0;
-    *r = entity_value(w, a3_vehicle_spawn_car(w, name, p, (f32)yaw, a3_v4(col.x, col.y, col.z, 1)));
+    const char *style = "sedan";
+    if (n > 4 && !a3s_arg_str(vm, a, 4, &style)) return 0;
+    static const char *const styles[] = { "sedan", "sports", "suv", "hatch", "taxi", "police" };
+    b32 known = 0;
+    for (u32 i = 0; i < A3_ARRAY_COUNT(styles); ++i) if (a3_streq(style, styles[i])) known = 1;
+    if (!known) return a3s_fail(vm, "unknown car style \"%s\" (use sedan, sports, suv, hatch, taxi or police)", style);
+    *r = entity_value(w, a3_vehicle_spawn_car_style(w, name, p, (f32)yaw, a3_v4(col.x, col.y, col.z, 1), style));
     return 1;
 }
 
@@ -1133,7 +1139,7 @@ static void register_natives(void) {
         { "raycast", n_raycast, 2, 3, "Physics", "raycast(origin, direction, max_distance)", "The first object hit by a ray, or nil (ignores the object running the script)." },
         { "raycast_hit", n_raycast_hit, 2, 3, "Physics", "raycast_hit(origin, direction, max_distance)", "[object, point, normal, distance] of the first hit, or nil." },
         { "overlap_sphere", n_overlap_sphere, 2, 2, "Physics", "overlap_sphere(center, radius)", "A list of objects with colliders inside a sphere." },
-        { "spawn_car", n_spawn_car, 0, 4, "City", "spawn_car(name, position, yaw, color)", "Creates a drivable car (Vehicle) facing yaw degrees; set car.Vehicle.use_input = true to drive it." },
+        { "spawn_car", n_spawn_car, 0, 5, "City", "spawn_car(name, position, yaw, color, style)", "Creates a drivable car (Vehicle) facing yaw degrees; style is sedan, sports, suv, hatch, taxi or police. Set car.Vehicle.use_input = true to drive it." },
         { "road_point", n_road_point, 0, 3, "City", "road_point(center, min_distance, max_distance)", "A random point on a road of the city, between the distances from center (nil without roads)." },
         { "nearest_road", n_nearest_road, 1, 1, "City", "nearest_road(position)", "[point, direction] of the closest road center line, or nil." },
         { "city_time", n_city_time, 1, 1, "City", "city_time(\"night\")", "Changes the sky, sun and look to \"day\", \"sunset\" or \"night\"." },

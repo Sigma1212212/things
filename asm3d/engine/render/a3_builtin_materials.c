@@ -158,8 +158,147 @@ static const BuiltinMaterial g_builtins[] = {
       "void a3_surface(inout A3Surface s) { s.albedo = s.color.rgb * (0.7 + 0.5 * a3_noise(s.world_pos * 2.5)); s.roughness = 0.8; }\n" },
     { "metal", "Painted or bare metal (lamp posts, rails, cranes). Base Color = color.",
       "void a3_surface(inout A3Surface s) { s.albedo = s.color.rgb; s.metallic = 0.8; s.roughness = 0.35 + 0.2 * a3_noise(s.world_pos * 5.0); }\n" },
+    { "carbody", "Car body for the builtin:car_* models: clear-coat paint (Base Color), tinted glass, chrome trim, head and tail lights (lit at night), grille, plates, door seams and handles, black sills. Regions come from the model's feature coordinates.",
+      NIGHT H2
+      "void a3_surface(inout A3Surface s) {\n"
+      "    float u = s.uv.x, v = s.uv.y; vec3 lp = s.local_pos; float ax = abs(lp.x);\n"
+      "    vec3 fn = normalize(cross(dFdx(lp), dFdy(lp)));\n"                                  /* object-space facet normal (sign free) */
+      "    float side = abs(fn.x), night = a3_night();\n"
+      "    float flake = a3_noise(lp * 180.0);\n"
+      "    s.albedo = s.color.rgb * (0.96 + 0.08 * flake); s.metallic = 0.18; s.roughness = 0.07 + 0.04 * flake;\n"
+      "    if (u > 10.5) {\n"                                                                   /* add-ons */
+      "        if (u < 12.0) { if (fn.z * sign(lp.z + 10.0) > 0.7 && ax > 0.9) { s.albedo = vec3(0.6); s.metallic = 1.0; s.roughness = 0.02; } return; }\n"
+      "        if (u < 13.0) { s.albedo = vec3(1.0, 0.85, 0.35); s.metallic = 0.0; s.roughness = 0.5; s.emissive = vec3(1.0, 0.8, 0.3) * (0.2 + 1.6 * night); return; }\n"
+      "        float on = step(0.5, fract(s.time * 2.3 + (u < 14.0 ? 0.0 : 0.5)));\n"
+      "        vec3 lc = u < 14.0 ? vec3(1.0, 0.05, 0.03) : vec3(0.05, 0.25, 1.0);\n"
+      "        s.albedo = lc * 0.3; s.metallic = 0.0; s.roughness = 0.2; s.emissive = lc * on * (3.0 + 6.0 * night); return;\n"
+      "    }\n"
+      "    if (v < 0.05) { s.albedo = vec3(0.025); s.metallic = 0.0; s.roughness = 0.9; return; }\n"            /* underside, wheel wells */
+      "    if (v < 0.17) { s.albedo = vec3(0.035); s.metallic = 0.0; s.roughness = 0.55; }\n"                   /* black sill / lower cladding */
+      "    float front = (1.0 - step(0.12, u)) * step(0.3, abs(fn.z)), rear = step(4.9, u) * step(0.3, abs(fn.z));\n"
+      /* glass: windshield and rear window on the top of the ring, side windows below the roof edge */
+      "    float wind = step(1.045, u) * step(u, 1.955) * step(1.958, v);\n"
+      "    float rwin = step(3.06, u) * step(u, 3.94) * step(1.958, v);\n"
+      "    float swin = step(1.13, u) * step(u, 3.87) * step(1.115, v) * step(v, 1.905) * step(0.03, abs(u - 2.47));\n"
+      "    float glass = max(max(wind, rwin), swin);\n"
+      "    if (glass > 0.5) {\n"
+      "        float edge = min(min(u - 1.045, 3.94 - u), 0.05) * 20.0;\n"
+      "        s.albedo = vec3(0.015, 0.02, 0.025) * (1.0 - 0.6 * (1.0 - edge)); s.metallic = 0.0; s.roughness = 0.02;\n"
+      "        return;\n"
+      "    }\n"
+      "    if (v > 1.08 && v < 1.115 && u > 1.13 && u < 3.87) { s.albedo = vec3(0.75); s.metallic = 1.0; s.roughness = 0.08; return; }\n"  /* chrome window trim */
+      "    if (front > 0.5 && v > 0.62 && v < 0.95 && ax > 0.40 && ax < 0.82) {\n"               /* headlights */
+      "        float ring = step(0.7, fract(length(vec2(ax - 0.61, (v - 0.78) * 0.5)) * 18.0));\n"
+      "        s.albedo = vec3(0.85, 0.87, 0.9) * (0.7 + 0.3 * ring); s.metallic = 0.9; s.roughness = 0.04;\n"
+      "        s.emissive = vec3(1.0, 0.96, 0.88) * (0.25 + 4.5 * night) * (0.6 + 0.4 * ring);\n"
+      "        return;\n"
+      "    }\n"
+      "    if (front > 0.5 && v > 0.22 && v < 0.6 && ax < 0.58 && u < 0.04) {\n"                  /* grille */
+      "        float slat = step(0.45, fract(lp.y * 28.0));\n"
+      "        s.albedo = vec3(0.02 + 0.05 * slat); s.metallic = 0.6; s.roughness = 0.35; return;\n"
+      "    }\n"
+      "    if (u < 0.03 && v > 0.1 && v < 0.22 && ax < 0.26) { s.albedo = vec3(0.9, 0.9, 0.85) * (0.6 + 0.4 * step(0.25, fract(lp.x * 11.0))); s.metallic = 0.0; s.roughness = 0.4; return; }\n"
+      "    if (rear > 0.5 && v > 0.56 && v < 0.94 && ax > 0.26 && ax < 0.92) {\n"                 /* tail lights */
+      "        float cells = step(0.15, fract(ax * 14.0));\n"
+      "        float bar = step(0.3, fract(v * 9.0));\n"
+      "        float reverse = step(ax, 0.42) * step(v, 0.7);\n"                                  /* white reversing lamp inboard */
+      "        s.albedo = mix(vec3(0.28, 0.015, 0.015) * (0.7 + 0.3 * bar), vec3(0.6), reverse); s.metallic = 0.3; s.roughness = 0.06;\n"
+      "        s.emissive = vec3(1.0, 0.03, 0.02) * (0.04 + 2.0 * night) * (0.5 + 0.5 * cells * bar) * (1.0 - reverse);\n"
+      "        return;\n"
+      "    }\n"
+      "    if (u > 4.97 && v > 0.36 && v < 0.5 && ax < 0.26) { s.albedo = vec3(0.9, 0.9, 0.85) * (0.6 + 0.4 * step(0.25, fract(lp.x * 11.0))); s.metallic = 0.0; s.roughness = 0.4; return; }\n"
+      "    if (side > 0.6 && v > 0.17 && v < 1.0) {\n"                                         /* door seams and handles */
+      "        float seam = step(abs(u - 1.12), 0.004) + step(abs(u - 2.43), 0.004) + step(abs(u - 3.32), 0.004);\n"
+      "        s.albedo *= 1.0 - 0.85 * clamp(seam, 0.0, 1.0);\n"
+      "        float handle = step(abs(v - 0.87), 0.025) * (step(abs(u - 2.25), 0.05) + step(abs(u - 3.18), 0.05));\n"
+      "        if (handle > 0.5) { s.albedo = vec3(0.7); s.metallic = 1.0; s.roughness = 0.1; }\n"
+      "    }\n"
+      "    s.albedo *= 1.0 - 0.18 * (1.0 - smoothstep(0.1, 0.45, v));\n"                        /* road grime low on the body */
+      "}\n" },
+    { "wheel", "Tire and alloy rim for builtin:wheel_detailed: tread, sidewall, five-spoke rim, brake disc, lug nuts.",
+      "void a3_surface(inout A3Surface s) {\n"
+      "    vec3 lp = s.local_pos; float r = length(lp.yz); float ang = atan(lp.y, lp.z);\n"
+      "    vec3 fn = normalize(cross(dFdx(lp), dFdy(lp)));\n"
+      "    if (r > 0.615) {\n"
+      "        s.albedo = vec3(0.035); s.metallic = 0.0; s.roughness = 0.85;\n"
+      "        if (abs(fn.x) < 0.5) { float tread = step(0.55, fract(ang * 9.549 + abs(lp.x) * 2.5)) * step(0.04, abs(lp.x)); s.albedo *= 0.6 + 0.6 * tread; s.roughness = 0.9; }\n"
+      "        else { s.albedo *= 1.0 + 0.4 * step(abs(r - 0.8), 0.01); }\n"
+      "        return;\n"
+      "    }\n"
+      "    if (lp.x < 0.0) { s.albedo = vec3(0.05); s.metallic = 0.5; s.roughness = 0.6; return; }\n"
+      "    float spoke = smoothstep(0.35, 0.55, cos(ang * 5.0) * 0.5 + 0.5);\n"
+      "    vec3 alloy = vec3(0.72, 0.73, 0.75);\n"
+      "    if (r > 0.2 && r < 0.54 && spoke < 0.5) { s.albedo = vec3(0.12) * (0.8 + 0.4 * a3_noise(lp * 60.0)); s.metallic = 0.8; s.roughness = 0.5; return; }\n"  /* brake disc */
+      "    s.albedo = alloy; s.metallic = 1.0; s.roughness = 0.22;\n"
+      "    if (r < 0.1) { s.albedo = vec3(0.1); s.roughness = 0.3; }\n"
+      "    float nut = step(length(vec2(r - 0.16, (fract(ang * 0.7958 + 0.1) - 0.5) * 0.4)), 0.022);\n"
+      "    s.albedo = mix(s.albedo, vec3(0.9), nut);\n"
+      "}\n" },
+    { "palm", "Palm tree for builtin:palm_a/b/c: ringed bark, glossy fronds that glow when backlit by the sun, dry fronds, coconuts. Base Color tints the leaves.",
+      H2
+      "void a3_surface(inout A3Surface s) {\n"
+      "    float region = floor(s.uv.x), f = fract(s.uv.x);\n"
+      "    if (region < 0.5) {\n"
+      "        float y = s.uv.y; float ring = smoothstep(0.35, 0.5, abs(fract(y / 0.22) - 0.5));\n"
+      "        float fiber = a3_noise(vec3(f * 40.0, y * 3.0, 0.0));\n"
+      "        s.albedo = mix(vec3(0.46, 0.4, 0.33), vec3(0.26, 0.22, 0.18), ring) * (0.8 + 0.35 * fiber);\n"
+      "        s.albedo = mix(s.albedo, vec3(0.3, 0.33, 0.2), smoothstep(8.0, 9.5, y));\n"          /* green crown shaft */
+      "        s.roughness = 0.92; s.metallic = 0.0; return;\n"
+      "    }\n"
+      "    if (region < 2.5) {\n"
+      "        float t = s.uv.y; float jit = a3_h2(vec2(floor(f * 20.0), region));\n"
+      "        vec3 green = s.color.rgb * (0.75 + 0.35 * jit) * mix(vec3(0.85, 0.95, 0.7), vec3(1.05, 1.0, 0.75), t);\n"
+      "        vec3 dry = vec3(0.55, 0.43, 0.26) * (0.8 + 0.3 * jit);\n"
+      "        s.albedo = region < 1.5 ? green : dry;\n"
+      "        s.roughness = region < 1.5 ? 0.45 : 0.85; s.metallic = 0.0;\n"
+      "        float back = pow(max(dot(s.view_dir, u_sun_dir), 0.0), 3.0);\n"                    /* light shining through the leaf */
+      "        s.emissive = s.albedo * u_sun_color * back * (region < 1.5 ? 0.35 : 0.15);\n"
+      "        return;\n"
+      "    }\n"
+      "    s.albedo = vec3(0.35, 0.3, 0.12) * (0.8 + 0.3 * a3_noise(s.world_pos * 20.0)); s.roughness = 0.6; s.metallic = 0.0;\n"
+      "}\n" },
+    { "human", "People (builtin:human_* parts): skin tone from Metallic (0 light .. 1 dark), hair / trousers / shoes style from Roughness, shirt color from Base Color.",
+      "vec3 a3_skin(float k) { return mix(mix(vec3(0.95, 0.78, 0.66), vec3(0.76, 0.55, 0.40), smoothstep(0.0, 0.5, k)), vec3(0.36, 0.24, 0.17), smoothstep(0.5, 1.0, k)); }\n"
+      "void a3_surface(inout A3Surface s) {\n"
+      "    float region = floor(s.uv.x); float tone = s.metallic, style = s.roughness;\n"
+      "    s.metallic = 0.0;\n"
+      "    vec3 skin = a3_skin(tone);\n"
+      "    float cloth = 0.9 + 0.2 * a3_noise(s.local_pos * 90.0);\n"
+      "    vec3 trousers = style < 0.33 ? vec3(0.12, 0.17, 0.3) : style < 0.66 ? vec3(0.55, 0.47, 0.34) : vec3(0.06, 0.06, 0.07);\n"
+      "    vec3 hair = style < 0.25 ? vec3(0.03, 0.025, 0.02) : style < 0.5 ? vec3(0.22, 0.13, 0.07) : style < 0.75 ? vec3(0.7, 0.55, 0.3) : vec3(0.5, 0.48, 0.46);\n"
+      "    vec3 shoe = fract(style * 7.0) < 0.5 ? vec3(0.9) : vec3(0.05);\n"
+      "    if (region < 0.5) { s.albedo = skin; s.roughness = 0.55; }\n"
+      "    else if (region < 1.5) { s.albedo = s.color.rgb * cloth; s.roughness = 0.8; }\n"
+      "    else if (region < 2.5) { s.albedo = trousers * cloth; s.roughness = 0.85; }\n"
+      "    else if (region < 3.5) { s.albedo = shoe; s.roughness = 0.5; }\n"
+      "    else { s.albedo = hair * (0.85 + 0.3 * a3_noise(s.local_pos * 120.0)); s.roughness = 0.6; }\n"
+      "}\n" },
+    { "signal", "Traffic signal (builtin:traffic_light): lamps follow a 30 s cycle shared with the traffic AI. Metallic = phase offset (0..1), Roughness > 0.5 = cross street.",
+      NIGHT
+      "void a3_surface(inout A3Surface s) {\n"
+      "    float region = floor(s.uv.x); float phase = s.metallic, group = s.roughness;\n"
+      "    s.albedo = vec3(0.12, 0.13, 0.12); s.metallic = 0.7; s.roughness = 0.45;\n"
+      "    if (region < 20.5) return;\n"
+      "    if (region < 21.5) { s.albedo = vec3(0.03); s.metallic = 0.0; s.roughness = 0.6; return; }\n"
+      "    float t = mod(s.time + phase * 30.0 + (group > 0.5 ? 15.0 : 0.0), 30.0);\n"
+      "    float lamp = t < 12.0 ? 24.0 : t < 15.0 ? 23.0 : 22.0;\n"                                /* green, amber, red */
+      "    vec3 lc = region < 22.5 ? vec3(1.0, 0.06, 0.03) : region < 23.5 ? vec3(1.0, 0.55, 0.02) : vec3(0.1, 1.0, 0.35);\n"
+      "    float on = step(abs(region - lamp), 0.1);\n"
+      "    s.albedo = lc * 0.12; s.metallic = 0.0; s.roughness = 0.15;\n"
+      "    s.emissive = lc * on * (2.5 + 5.0 * a3_night());\n"
+      "}\n" },
+    { "props", "Street furniture (builtin:hydrant, bench, trash_can, street_lamp): painted metal, wood slats, lamp glass lit at night.",
+      NIGHT
+      "void a3_surface(inout A3Surface s) {\n"
+      "    float region = floor(s.uv.x);\n"
+      "    float n = a3_noise(s.world_pos * 8.0);\n"
+      "    if (region < 20.0) { s.albedo = vec3(0.14, 0.15, 0.15) * (0.9 + 0.2 * n); s.metallic = 0.75; s.roughness = 0.4; return; }\n"
+      "    if (region < 26.0) { s.albedo = vec3(0.9, 0.85, 0.7); s.metallic = 0.0; s.roughness = 0.2; s.emissive = vec3(1.0, 0.75, 0.45) * (0.1 + 6.0 * a3_night()); return; }\n"
+      "    if (region < 30.5) { s.albedo = vec3(0.72, 0.08, 0.05) * (0.85 + 0.3 * n); s.metallic = 0.3; s.roughness = 0.35; return; }\n"
+      "    if (region < 31.5) { s.albedo = vec3(0.45, 0.3, 0.18) * (0.75 + 0.4 * a3_noise(vec3(s.local_pos.x * 2.0, s.local_pos.y * 40.0, s.local_pos.z * 40.0))); s.metallic = 0.0; s.roughness = 0.7; return; }\n"
+      "    s.albedo = vec3(0.1, 0.2, 0.14) * (0.9 + 0.2 * n); s.metallic = 0.6; s.roughness = 0.45;\n"
+      "}\n" },
 };
-
 u32 a3_builtin_material_count(void) { return A3_ARRAY_COUNT(g_builtins); }
 
 const char *a3_builtin_material_name(u32 i) { return i < A3_ARRAY_COUNT(g_builtins) ? g_builtins[i].name : 0; }

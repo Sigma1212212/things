@@ -7,6 +7,7 @@
 #include "../world/a3_procmeshes.h"
 #include "../world/a3_traffic.h"
 #include "../world/a3_citygen.h"
+#include "../world/a3_people.h"
 #include "../physics/a3_vehicle.h"
 #include "a3_engine.h"
 #include "../physics/a3_physics.h"
@@ -112,8 +113,9 @@ static void sys_vehicle_input(A3SystemContext *ctx, void *user) {
     }
 }
 
+static void sys_people(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_people_update(ctx->world, ctx->dt); }
 static void sys_city(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_city_update(ctx->world); }
-static void sys_traffic(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_traffic_update(ctx->world, ctx->dt); }
+static void sys_traffic(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_traffic_update(ctx->world, ctx->dt, ctx->time); }
 static void sys_vehicles(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_vehicle_update_all(ctx->world, ctx->dt); }
 
 static void sys_chase_camera(A3SystemContext *ctx, void *user) {
@@ -205,6 +207,14 @@ void a3_modules_register_all(void) {
     d.phase = A3_PHASE_FIXED;
     d.order = 55;
     d.update = sys_vehicles;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "People";
+    d.phase = A3_PHASE_UPDATE;
+    d.order = 40;
+    d.update = sys_people;
+    d.run_in_editor = 1;
     a3_systems_register(&d);
 
     a3_zero_struct(&d);

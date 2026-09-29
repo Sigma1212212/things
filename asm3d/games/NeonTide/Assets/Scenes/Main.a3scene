@@ -5,7 +5,7 @@
   "name": "Scene",
   "entities": [
     {
-      "guid": "556eb73d50837646",
+      "guid": "94002fa0a63fd3fa",
       "name": "World Settings",
       "components": {
         "Transform": {
@@ -38,7 +38,7 @@
       }
     },
     {
-      "guid": "1aa3fed212e63c6f",
+      "guid": "cdc482ff6213dd9b",
       "name": "Sun",
       "components": {
         "Transform": {
@@ -57,7 +57,7 @@
       }
     },
     {
-      "guid": "13e555a619d9a96b",
+      "guid": "e7c4e9571ae80712",
       "name": "Sol Harbor",
       "components": {
         "Transform": {
@@ -75,7 +75,7 @@
       }
     },
     {
-      "guid": "77ff940fcec95bea",
+      "guid": "2a675bfcf577695e",
       "name": "City Traffic",
       "components": {
         "Transform": {
@@ -94,7 +94,7 @@
       }
     },
     {
-      "guid": "61dd0a1ce3c25fcc",
+      "guid": "8900474f9dad2e6f",
       "name": "Player",
       "components": {
         "Transform": {
@@ -123,9 +123,9 @@
       }
     },
     {
-      "guid": "2735900a69f08380",
+      "guid": "59fd8d0c7e76f0a7",
       "name": "Main Camera",
-      "parent": "61dd0a1ce3c25fcc",
+      "parent": "8900474f9dad2e6f",
       "components": {
         "Transform": {
           "position": [0, 1.65, 0],
@@ -146,9 +146,9 @@
       }
     },
     {
-      "guid": "658377c5d40873f4",
+      "guid": "691f0fe359bcab31",
       "name": "Body",
-      "parent": "61dd0a1ce3c25fcc",
+      "parent": "8900474f9dad2e6f",
       "components": {
         "Transform": {
           "position": [0, 0.9, 0],
@@ -171,9 +171,9 @@
       }
     },
     {
-      "guid": "c5bb7e697ddd8e48",
+      "guid": "755f5639f02fbde6",
       "name": "Head",
-      "parent": "61dd0a1ce3c25fcc",
+      "parent": "8900474f9dad2e6f",
       "components": {
         "Transform": {
           "position": [0, 1.68, 0],
@@ -196,7 +196,7 @@
       }
     },
     {
-      "guid": "b40c9ef05c2f69fd",
+      "guid": "8994a559ffd9924a",
       "name": "Checkpoint",
       "components": {
         "Transform": {
@@ -220,7 +220,7 @@
       }
     },
     {
-      "guid": "032d20d42b73844a",
+      "guid": "23bf88111a8902cb",
       "name": "Lightbar Template",
       "active": false,
       "components": {
@@ -245,7 +245,7 @@
       }
     },
     {
-      "guid": "97765ce5541e1b96",
+      "guid": "ac135524f0aed22d",
       "name": "Game",
       "components": {
         "Transform": {
