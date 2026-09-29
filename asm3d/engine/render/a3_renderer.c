@@ -11,6 +11,7 @@
 #include "../core/a3_sort.h"
 #include "../core/a3_strbuf.h"
 #include "../core/a3_hash.h"
+#include "../core/a3_json.h"
 #include "../resource/a3_assets.h"
 #include "../scene/a3_components.h"
 #include "../platform/a3_platform.h"
@@ -33,6 +34,13 @@ typedef struct Material {
     u32 textures[2];
     char name[64];
 } Material;
+
+typedef struct TargetSet {
+    i32 w, h;
+    u64 last_used;
+    A3RhiTexture hdr_color, hdr_depth, ldr_color;
+    A3RhiTarget hdr_target, ldr_target;
+} TargetSet;
 
 typedef struct Batch {
     u32 mesh;
@@ -59,7 +67,11 @@ struct A3Renderer {
     /* HDR chain */
     i32 rt_w, rt_h;
     A3RhiTexture hdr_color, hdr_depth, ldr_color;
-    A3RhiTarget hdr_target, ldr_target;
+    A3RhiTarget hdr_target, ldr_target;   /* current set (one of target_sets) */
+    TargetSet target_sets[3];
+    u64 target_clock;
+    /* material assets by path (.a3shader files) */
+    A3HashMap path_materials;             /* hash(path) -> material id, 0xFFFFFFFF = failed */
     /* shadow */
     i32 shadow_size;
     A3RhiTexture shadow_tex;
@@ -156,17 +168,25 @@ A3Renderer *a3_renderer_create(void) {
     gl.count = 1;
     r->grid_mesh = a3_rhi_mesh_create(r->grid_vb, &gl, r->grid_ib, 1);
     a3_hashmap_init(&r->entity_materials, 64, A3_MEM_RENDER);
+    a3_hashmap_init(&r->path_materials, 32, A3_MEM_RENDER);
     a3_rhi_set_int(r->tonemap, "u_hdr", 0);
     a3_rhi_set_int(r->fxaa, "u_ldr", 0);
     return r;
 }
 
+static u32 material_from_path(A3Renderer *r, const char *path);
+
+static void destroy_target_set(TargetSet *t) {
+    if (t->hdr_target.id) a3_rhi_target_destroy(t->hdr_target);
+    if (t->ldr_target.id) a3_rhi_target_destroy(t->ldr_target);
+    if (t->hdr_color.id) a3_rhi_texture_destroy(t->hdr_color);
+    if (t->hdr_depth.id) a3_rhi_texture_destroy(t->hdr_depth);
+    if (t->ldr_color.id) a3_rhi_texture_destroy(t->ldr_color);
+    a3_zero_struct(t);
+}
+
 static void destroy_targets(A3Renderer *r) {
-    if (r->hdr_target.id) a3_rhi_target_destroy(r->hdr_target);
-    if (r->ldr_target.id) a3_rhi_target_destroy(r->ldr_target);
-    if (r->hdr_color.id) a3_rhi_texture_destroy(r->hdr_color);
-    if (r->hdr_depth.id) a3_rhi_texture_destroy(r->hdr_depth);
-    if (r->ldr_color.id) a3_rhi_texture_destroy(r->ldr_color);
+    for (u32 i = 0; i < A3_ARRAY_COUNT(r->target_sets); ++i) destroy_target_set(&r->target_sets[i]);
     r->hdr_target.id = r->ldr_target.id = r->hdr_color.id = r->hdr_depth.id = r->ldr_color.id = 0;
     r->rt_w = r->rt_h = 0;
 }
@@ -187,28 +207,47 @@ void a3_renderer_destroy(A3Renderer *r) {
     a3_rhi_buffer_destroy(r->instance_buf);
     a3_array_free(r->debug_verts);
     a3_hashmap_free(&r->entity_materials);
+    a3_hashmap_free(&r->path_materials);
     a3_free(r);
 }
 
 A3RenderSettings *a3_renderer_settings(A3Renderer *r) { return r ? &r->settings : 0; }
 const A3RenderFrameInfo *a3_renderer_frame_info(A3Renderer *r) { return r ? &r->info : 0; }
 
+/* A few HDR target sets are cached by size so views of different sizes
+ * (editor viewport, Shader Maker preview, thumbnails) do not reallocate
+ * render targets every frame. */
 static b32 ensure_targets(A3Renderer *r, i32 w, i32 h) {
     if (w <= 0 || h <= 0) return 0;
-    if (r->rt_w == w && r->rt_h == h && r->hdr_target.id) return 1;
-    destroy_targets(r);
-    A3TextureDesc d;
-    a3_zero_struct(&d);
-    d.width = w; d.height = h; d.wrap = A3_WRAP_CLAMP; d.filter = A3_FILTER_LINEAR;
-    d.format = A3_TEX_RGBA16F; d.debug_name = "hdr_color";
-    r->hdr_color = a3_rhi_texture_create(&d);
-    d.format = A3_TEX_DEPTH24; d.debug_name = "hdr_depth";
-    r->hdr_depth = a3_rhi_texture_create(&d);
-    d.format = A3_TEX_RGBA8; d.debug_name = "ldr_color";
-    r->ldr_color = a3_rhi_texture_create(&d);
-    r->hdr_target = a3_rhi_target_create(r->hdr_color, r->hdr_depth);
-    r->ldr_target = a3_rhi_target_create(r->ldr_color, (A3RhiTexture){ 0 });
-    if (!r->hdr_target.id || !r->ldr_target.id) { destroy_targets(r); return 0; }
+    TargetSet *use = 0;
+    for (u32 i = 0; i < A3_ARRAY_COUNT(r->target_sets); ++i)
+        if (r->target_sets[i].w == w && r->target_sets[i].h == h && r->target_sets[i].hdr_target.id) { use = &r->target_sets[i]; break; }
+    if (!use) {
+        use = &r->target_sets[0];
+        for (u32 i = 1; i < A3_ARRAY_COUNT(r->target_sets); ++i)
+            if (r->target_sets[i].last_used < use->last_used) use = &r->target_sets[i];
+        destroy_target_set(use);
+        A3TextureDesc d;
+        a3_zero_struct(&d);
+        d.width = w; d.height = h; d.wrap = A3_WRAP_CLAMP; d.filter = A3_FILTER_LINEAR;
+        d.format = A3_TEX_RGBA16F; d.debug_name = "hdr_color";
+        use->hdr_color = a3_rhi_texture_create(&d);
+        d.format = A3_TEX_DEPTH24; d.debug_name = "hdr_depth";
+        use->hdr_depth = a3_rhi_texture_create(&d);
+        d.format = A3_TEX_RGBA8; d.debug_name = "ldr_color";
+        use->ldr_color = a3_rhi_texture_create(&d);
+        use->hdr_target = a3_rhi_target_create(use->hdr_color, use->hdr_depth);
+        use->ldr_target = a3_rhi_target_create(use->ldr_color, (A3RhiTexture){ 0 });
+        if (!use->hdr_target.id || !use->ldr_target.id) { destroy_target_set(use); return 0; }
+        use->w = w;
+        use->h = h;
+    }
+    use->last_used = ++r->target_clock;
+    r->hdr_color = use->hdr_color;
+    r->hdr_depth = use->hdr_depth;
+    r->ldr_color = use->ldr_color;
+    r->hdr_target = use->hdr_target;
+    r->ldr_target = use->ldr_target;
     r->rt_w = w;
     r->rt_h = h;
     return 1;
@@ -420,6 +459,7 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
         rd->texture = mr->texture.path[0] ? a3_assets_resolve_texture(&mr->texture) : 0;
         u64 mat = 0;
         rd->material = a3_hashmap_get(&r->entity_materials, a3_entity_guid(w, q.entity), &mat) ? (u32)mat : 0;
+        if (!rd->material && mr->material.path[0]) rd->material = material_from_path(r, mr->material.path);
         if (rd->material >= MAX_MATERIALS || !r->materials[rd->material].used) rd->material = 0;
         rd->cast_shadows = mr->cast_shadows;
         rd->transparent = mr->base_color.w < 0.999f;
@@ -743,6 +783,59 @@ void a3_renderer_material_set_params(A3Renderer *r, u32 id, const A3Vec4 params[
 void a3_renderer_material_set_texture(A3Renderer *r, u32 id, u32 slot, u32 tex) {
     if (!r || id == 0 || id >= MAX_MATERIALS || !r->materials[id].used || slot > 1) return;
     r->materials[id].textures[slot] = tex;
+}
+
+/* .a3shader assets (written by the Shader Maker) carry the generated surface
+ * code, so games load materials without the graph compiler. A file that fails
+ * is remembered and logged once; the object falls back to its simple material. */
+static u32 material_from_path(A3Renderer *r, const char *path) {
+    u64 key = a3_hash_str(path), val = 0;
+    if (a3_hashmap_get(&r->path_materials, key, &val)) return val == 0xFFFFFFFFu ? 0 : (u32)val;
+    u32 id = 0;
+    char abs[A3_PATH_MAX * 2];
+    a3_assets_path(path, abs, sizeof(abs));
+    A3FileData fd;
+    if (a3_file_read_all(abs, A3_MEM_TEMP, &fd) != A3_OK) {
+        a3_log_hint(A3_LOG_ERROR, "render", "Check the Material field of the Mesh Renderer.", "material file not found: %s", path);
+    } else {
+        A3Arena ar;
+        a3_arena_init(&ar, A3_MEM_TEMP, A3_KB(32));
+        A3JsonError err;
+        A3Json *root = a3_json_parse((const char *)fd.data, fd.size, &ar, &err);
+        const char *code = root ? a3_json_get_string(root, "surface", 0) : 0;
+        if (!code) {
+            A3_ERROR("render", "material %s is damaged or has no compiled surface (line %d)", path, root ? 0 : err.line);
+        } else {
+            A3ShaderCompileResult res;
+            id = a3_renderer_material_create(r, code, a3_json_get_string(root, "name", path), &res);
+            if (!id) {
+                A3_ERROR("render", "material %s failed to compile: %s", path, res.error_count ? res.errors[0].message : res.raw_log);
+            } else {
+                A3Vec4 params[4];
+                for (int i = 0; i < 4; ++i) params[i] = a3_v4(1, 1, 1, 1);
+                A3Json *pa = a3_json_get(root, "params");
+                for (u32 i = 0; i < 4 && i < a3_json_count(pa); ++i) a3_json_get_floats(a3_json_at(pa, i), &params[i].x, 4);
+                a3_renderer_material_set_params(r, id, params);
+                A3Json *tx = a3_json_get(root, "textures");
+                for (u32 i = 0; i < 2 && i < a3_json_count(tx); ++i) {
+                    const char *tp = a3_json_string(a3_json_at(tx, i), "");
+                    if (tp[0]) a3_renderer_material_set_texture(r, id, i, a3_assets_texture(tp));
+                }
+            }
+        }
+        a3_arena_release(&ar);
+        a3_free(fd.data);
+    }
+    a3_hashmap_put(&r->path_materials, key, id ? id : 0xFFFFFFFFu);
+    return id;
+}
+
+void a3_renderer_material_invalidate(A3Renderer *r, const char *path) {
+    if (!r || !path) return;
+    u64 key = a3_hash_str(path), val = 0;
+    if (!a3_hashmap_get(&r->path_materials, key, &val)) return;
+    if (val != 0xFFFFFFFFu) a3_renderer_material_destroy(r, (u32)val);
+    a3_hashmap_remove(&r->path_materials, key);
 }
 
 void a3_renderer_set_entity_material(A3Renderer *r, A3World *w, A3Entity e, u32 material) {

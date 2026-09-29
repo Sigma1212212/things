@@ -445,6 +445,7 @@ void a3_ui_scroll_here(A3Ui *ui) {
 }
 
 A3Vec2 a3_ui_cursor_pos(A3Ui *ui) { return cur_panel(ui)->cursor; }
+void a3_ui_set_next_width(A3Ui *ui, f32 w) { cur_panel(ui)->next_w = w; }
 void a3_ui_set_cursor_pos(A3Ui *ui, A3Vec2 p) { UiPanel *pn = cur_panel(ui); pn->cursor = p; pn->same_line = 0; pn->cursor_x_set = 1; }
 
 f32 a3_ui_content_width(A3Ui *ui) {
@@ -474,6 +475,8 @@ A3Rect a3_ui_next_rect(A3Ui *ui, f32 w, f32 h) {
         p->cursor.x = p->inner.x + p->indent - p->scroll_x;
     }
     f32 avail = p->inner.x + p->inner.w - p->cursor.x;
+    if (w <= 0 && p->next_w > 0) w = p->next_w;
+    p->next_w = 0;
     if (w <= 0) w = avail + w;
     if (w < 1) w = 1;
     A3Rect r = a3_rect(p->cursor.x, p->cursor.y, w, h);

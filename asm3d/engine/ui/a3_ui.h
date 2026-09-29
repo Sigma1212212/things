@@ -166,6 +166,7 @@ A3Rect a3_ui_panel_rect(A3Ui *ui);               /* inner rect of current panel 
 f32   a3_ui_content_width(A3Ui *ui);             /* remaining width on the current line */
 A3Rect a3_ui_next_rect(A3Ui *ui, f32 w, f32 h);  /* w <= 0: fill (minus -w) */
 void  a3_ui_same_line(A3Ui *ui);
+void  a3_ui_set_next_width(A3Ui *ui, f32 w);     /* width of the next widget that would fill the line */
 void  a3_ui_spacing(A3Ui *ui, f32 h);
 void  a3_ui_separator(A3Ui *ui);
 void  a3_ui_indent(A3Ui *ui, f32 w);

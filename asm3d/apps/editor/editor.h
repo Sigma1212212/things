@@ -260,7 +260,9 @@ void ed_shader_panel(void *user, A3Ui *ui, A3Rect r);
 void ed_shader_init(A3Editor *ed);
 void ed_shader_shutdown(A3Editor *ed);
 void ed_shader_new(A3Editor *ed);
+void ed_shader_preset(A3Editor *ed, u32 preset);
 b32  ed_shader_open(A3Editor *ed, const char *rel_path);
 void ed_shader_render_preview(A3Editor *ed); /* offscreen preview, called after the UI frame */
+int  ed_shader_selftest(A3Editor *ed);          /* returns the number of failures */
 
 #endif

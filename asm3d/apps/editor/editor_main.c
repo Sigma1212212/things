@@ -712,6 +712,7 @@ static void editor_frame(A3Editor *ed, f32 dt) {
         /* keep the edit world's matrices current for gizmos and picking */
         if (ed->mode == ED_EDIT) a3_transform_system_update(ed->world);
         if (ed->mode != ED_EDIT && real->mouse_captured && real->keys_pressed[A3_KEY_ESCAPE]) ed->game_focused = 0;
+        ed_shader_render_preview(ed);   /* before the viewport: debug lines are per draw */
         ed_viewport_render(ed);
         ed_autosave_tick(ed);
     }
@@ -820,6 +821,8 @@ static int selftest_run(A3Editor *ed, const char *tmp) {
     i32 doc = ed_code_open(ed, "Assets/Scripts/selftest.txt");
     ST_CHECK(doc >= 0);
     ST_CHECK(ed_code_save(ed, doc));
+    /* Shader Maker: presets compile on the GPU, errors map to nodes, materials load */
+    ST_CHECK(ed_shader_selftest(ed) == 0);
     /* palette commands resolve */
     ed_run_command(ed, "Toggle Grid");
     A3_INFO("selftest", "editor self test passed (%d checks)", passed);
@@ -846,7 +849,7 @@ int main(int argc, char **argv) {
     const char *project = 0, *new_name = 0, *new_loc = 0, *layout = 0, *shot = 0, *select = 0, *show = 0, *open_file = 0;
     int frames = -1, width = 1600, height = 900, tpl = 0;
     b32 hidden = 0, beginner = 0, advanced = 0, light = 0, run_selftest = 0, build_only = 0;
-    i32 play_at = -1;
+    i32 play_at = -1, shader_preset = -1;
     for (int i = 1; i < argc; ++i) {
         const char *a = argv[i];
         b32 more = i + 1 < argc;
@@ -861,6 +864,7 @@ int main(int argc, char **argv) {
         else if (a3_streq(a, "--show") && more) show = argv[++i];
         else if (a3_streq(a, "--open") && more) open_file = argv[++i];
         else if (a3_streq(a, "--play-at") && more) play_at = atoi(argv[++i]);
+        else if (a3_streq(a, "--shader-preset") && more) shader_preset = atoi(argv[++i]);
         else if (a3_streq(a, "--hidden")) hidden = 1;
         else if (a3_streq(a, "--beginner")) beginner = 1;
         else if (a3_streq(a, "--advanced")) advanced = 1;
@@ -876,7 +880,8 @@ int main(int argc, char **argv) {
             static const char usage[] =
                 "usage: asm3d_editor [--project DIR] [--new NAME --location DIR --template N] [--layout NAME]\n"
                 "                    [--beginner|--advanced] [--light] [--select NAME] [--show PANEL] [--open FILE]\n"
-                "                    [--play-at N] [--frames N --screenshot FILE] [--hidden] [--size WxH] [--selftest] [--build]\n";
+                "                    [--play-at N] [--shader-preset N] [--frames N --screenshot FILE] [--hidden] [--size WxH]\n"
+                "                    [--selftest] [--build]\n";
             a3_console_write(A3_LOG_INFO, usage, sizeof(usage) - 1);
             return 0;
         }
@@ -931,7 +936,11 @@ int main(int argc, char **argv) {
         if (layout) ed_layout_preset(ed, layout);
         else if (ed->has_project && new_name) ed_layout_preset(ed, ed->level == ED_LEVEL_BEGINNER ? "Beginner" : "Default");
         if (show) a3_dock_show(&ed->dock, show);
-        if (open_file && ed->has_project) { ed_code_open(ed, open_file); a3_dock_show(&ed->dock, "Code"); }
+        if (open_file && ed->has_project) {
+            if (a3_str_ends_with(open_file, ".a3shader")) { if (ed_shader_open(ed, open_file)) a3_dock_show(&ed->dock, "Shader Maker"); }
+            else { ed_code_open(ed, open_file); a3_dock_show(&ed->dock, "Code"); }
+        }
+        if (shader_preset >= 0 && ed->shader) ed_shader_preset(ed, shader_preset);
         if (ed->show_welcome && frames < 0) ed_open_modal(ed, "welcome");
         ed->show_welcome = 0;
         f32 dt;

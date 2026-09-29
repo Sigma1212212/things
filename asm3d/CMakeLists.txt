@@ -41,6 +41,7 @@ list(APPEND A3_SHARED_SOURCES
   ${CMAKE_SOURCE_DIR}/engine/render/a3_mesh.c
   ${CMAKE_SOURCE_DIR}/engine/render/a3_renderer.c
   ${CMAKE_SOURCE_DIR}/engine/render/a3_shaders.c
+  ${CMAKE_SOURCE_DIR}/engine/render/a3_shader_graph.c
 )
 set(A3_ENGINE_SOURCES
   ${A3_CORE_SOURCES}

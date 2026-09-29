@@ -26,7 +26,8 @@ typedef struct UiPanel {
     A3Vec2 cursor;         /* next item position */
     f32 line_h;            /* height of the current line */
     b32 same_line;
-    b32 cursor_x_set;      /* set_cursor_pos: next item starts at cursor.x instead of the left edge */
+    b32 cursor_x_set;
+    f32 next_w;            /* a3_ui_set_next_width: width for the next fill-width item */      /* set_cursor_pos: next item starts at cursor.x instead of the left edge */
     f32 indent;
     f32 content_bottom;    /* lowest item bottom (for scrolling) */
     f32 content_right;

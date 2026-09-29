@@ -79,6 +79,9 @@ b32  a3_renderer_material_update(A3Renderer *r, u32 material, const char *surfac
 void a3_renderer_material_destroy(A3Renderer *r, u32 material);
 void a3_renderer_material_set_params(A3Renderer *r, u32 material, const A3Vec4 params[4]);
 void a3_renderer_material_set_texture(A3Renderer *r, u32 material, u32 slot, u32 texture_asset);
+/* MeshRenderer.material may point to a .a3shader file; it is loaded on first
+ * use and cached. Call after the file changes so the next frame reloads it. */
+void a3_renderer_material_invalidate(A3Renderer *r, const char *path);
 /* Maps an entity to a material without an asset file (Shader Maker preview). */
 void a3_renderer_set_entity_material(A3Renderer *r, A3World *w, A3Entity e, u32 material);
 
