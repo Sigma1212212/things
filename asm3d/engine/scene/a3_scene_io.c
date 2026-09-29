@@ -274,7 +274,7 @@ static void load_components(A3World *w, A3Entity e, const A3Json *comps, A3Scene
     a3_strbuf_free(&unknown);
 }
 
-A3Result a3_scene_load_json(A3World *w, const char *text, usize len, A3SceneLoadReport *rep) {
+static A3Result scene_load_json_impl(A3World *w, const char *text, usize len, A3SceneLoadReport *rep) {
     A3SceneLoadReport local;
     if (!rep) rep = &local;
     a3_zero_struct(rep);
@@ -404,6 +404,32 @@ A3Result a3_entities_save_json(A3World *w, const A3Entity *roots, u32 count, A3S
     return out->failed ? A3_ERR_OUT_OF_MEMORY : A3_OK;
 }
 
+static void write_subtree_keep_parent(A3World *w, A3Entity e, A3JsonWriter *jw) {
+    write_entity(w, e, jw, A3_SCENE_SAVE_INCLUDE_RUNTIME, 1);
+    for (A3Entity c = a3_entity_first_child(w, e); a3_entity_valid(w, c); c = a3_entity_next_sibling(w, c)) write_subtree_keep_parent(w, c, jw);
+}
+
+A3Result a3_scene_save_subtree_json(A3World *w, A3Entity root, A3StrBuf *out) {
+    if (!a3_entity_valid(w, root)) return A3_ERR_INVALID_ARG;
+    A3JsonWriter jw;
+    a3_jw_init(&jw, out, 1);
+    a3_jw_begin_object(&jw);
+    a3_jw_kv_string(&jw, "format", SCENE_FORMAT_ID);
+    a3_jw_kv_int(&jw, "version", A3_FORMAT_VERSION);
+    /* position among siblings so undo restores the hierarchy order */
+    u32 index = 0;
+    A3Entity parent = a3_entity_parent(w, root);
+    A3Entity it = a3_entity_valid(w, parent) ? a3_entity_first_child(w, parent) : w->first_root;
+    while (a3_entity_valid(w, it) && !a3_entity_eq(it, root)) { ++index; it = a3_entity_next_sibling(w, it); }
+    a3_jw_kv_int(&jw, "siblingIndex", index);
+    a3_jw_key(&jw, "entities");
+    a3_jw_begin_array(&jw);
+    write_subtree_keep_parent(w, root, &jw);
+    a3_jw_end_array(&jw);
+    a3_jw_end_object(&jw);
+    return out->failed ? A3_ERR_OUT_OF_MEMORY : A3_OK;
+}
+
 static void remap_entity_refs(A3World *w, A3Entity e, const u64 *old_ids, const u64 *new_ids, u32 n) {
     for (u32 t = 0; t < a3_component_type_count(); ++t) {
         u8 *data = (u8 *)a3_component_get(w, e, t);
@@ -417,7 +443,7 @@ static void remap_entity_refs(A3World *w, A3Entity e, const u64 *old_ids, const 
     }
 }
 
-u32 a3_entities_load_json(A3World *w, const char *text, usize len, A3Entity parent, A3Entity *out_roots, u32 max_roots) {
+static u32 entities_load_json_impl(A3World *w, const char *text, usize len, A3Entity parent, A3Entity *out_roots, u32 max_roots) {
     A3Arena arena;
     a3_arena_init(&arena, A3_MEM_TEMP, A3_KB(64));
     A3JsonError jerr;
@@ -458,4 +484,22 @@ u32 a3_entities_load_json(A3World *w, const char *text, usize len, A3Entity pare
     a3_free(old_ids); a3_free(new_ids); a3_free(created);
     a3_arena_release(&arena);
     return roots;
+}
+
+/* Hooks such as "Character Controller adds a camera child" must not run while
+ * loading: the file already contains the result of those hooks. */
+A3Result a3_scene_load_json(A3World *w, const char *text, usize len, A3SceneLoadReport *rep) {
+    if (!w) return A3_ERR_INVALID_ARG;
+    w->loading++;
+    A3Result r = scene_load_json_impl(w, text, len, rep);
+    w->loading--;
+    return r;
+}
+
+u32 a3_entities_load_json(A3World *w, const char *text, usize len, A3Entity parent, A3Entity *out_roots, u32 max_roots) {
+    if (!w) return 0;
+    w->loading++;
+    u32 n = entities_load_json_impl(w, text, len, parent, out_roots, max_roots);
+    w->loading--;
+    return n;
 }

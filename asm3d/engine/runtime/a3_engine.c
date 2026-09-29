@@ -30,7 +30,12 @@ struct A3Engine {
     f64 accumulator;
     f32 fixed_dt;
     b32 playing;
+    const A3InputState *input_override; /* editor: game input only while the viewport has focus */
 };
+
+static const A3InputState *game_input(A3Engine *e) { return e->input_override ? e->input_override : a3_window_input(e->window); }
+
+void a3_engine_set_input_override(A3Engine *e, const A3InputState *input) { if (e) e->input_override = input; }
 
 void a3_systems_register(const A3SystemDesc *d) {
     if (!d || !d->name) return;
@@ -136,7 +141,7 @@ static void run_phase(A3Engine *e, A3World *w, A3SystemPhase phase, f32 dt, b32 
     ctx.dt = dt;
     ctx.time = e->play_time;
     ctx.frame = e->frame;
-    ctx.input = a3_window_input(e->window);
+    ctx.input = game_input(e);
     ctx.actions = &e->input_map;
     ctx.editor_preview = editor_only;
     for (u32 i = 0; i < g_sys.count; ++i) {
@@ -154,13 +159,13 @@ void a3_engine_start_play(A3Engine *e, A3World *w) {
     e->playing = 1;
     e->play_time = 0;
     e->accumulator = 0;
-    A3SystemContext ctx = { e, w, 0, 0, e->frame, a3_window_input(e->window), &e->input_map, 0 };
+    A3SystemContext ctx = { e, w, 0, 0, e->frame, game_input(e), &e->input_map, 0 };
     for (u32 i = 0; i < g_sys.count; ++i) if (g_sys.systems[i].on_start) g_sys.systems[i].on_start(&ctx, g_sys.systems[i].user);
 }
 
 void a3_engine_stop_play(A3Engine *e, A3World *w) {
     if (!e) return;
-    A3SystemContext ctx = { e, w, 0, e->play_time, e->frame, a3_window_input(e->window), &e->input_map, 0 };
+    A3SystemContext ctx = { e, w, 0, e->play_time, e->frame, game_input(e), &e->input_map, 0 };
     for (u32 i = 0; i < g_sys.count; ++i) if (g_sys.systems[i].on_stop) g_sys.systems[i].on_stop(&ctx, g_sys.systems[i].user);
     e->playing = 0;
 }

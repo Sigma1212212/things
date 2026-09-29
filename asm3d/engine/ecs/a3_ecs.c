@@ -283,6 +283,25 @@ b32 a3_entity_set_parent(A3World *w, A3Entity child, A3Entity parent) {
     return 1;
 }
 
+void a3_entity_set_sibling_index(A3World *w, A3Entity e, u32 index) {
+    if (!a3_entity_valid(w, e)) return;
+    A3Entity parent = w->entities[e.index].parent;
+    b32 root = !a3_entity_valid(w, parent);
+    detach(w, e);
+    A3EntityRecord *r = &w->entities[e.index];
+    A3Entity *first = root ? &w->first_root : &w->entities[parent.index].first_child;
+    A3Entity prev = A3_ENTITY_NULL, cur = *first;
+    for (u32 i = 0; i < index && a3_entity_valid(w, cur); ++i) { prev = cur; cur = w->entities[cur.index].next_sibling; }
+    r->parent = root ? A3_ENTITY_NULL : parent;
+    r->prev_sibling = prev;
+    r->next_sibling = cur;
+    if (a3_entity_valid(w, prev)) w->entities[prev.index].next_sibling = e;
+    else *first = e;
+    if (a3_entity_valid(w, cur)) w->entities[cur.index].prev_sibling = e;
+    else if (root) w->last_root = e;
+    w->hierarchy_version++;
+}
+
 A3Entity a3_entity_parent(const A3World *w, A3Entity e) { return a3_entity_valid(w, e) ? w->entities[e.index].parent : A3_ENTITY_NULL; }
 A3Entity a3_entity_first_child(const A3World *w, A3Entity e) { return a3_entity_valid(w, e) ? w->entities[e.index].first_child : A3_ENTITY_NULL; }
 A3Entity a3_entity_next_sibling(const A3World *w, A3Entity e) { return a3_entity_valid(w, e) ? w->entities[e.index].next_sibling : A3_ENTITY_NULL; }
@@ -441,7 +460,7 @@ void *a3_component_add(A3World *w, A3Entity e, u32 type_id) {
     a3_memcpy(data, t->defaults, t->size);
     w->entities[e.index].mask[type_id / 64] |= 1ull << (type_id % 64);
     w->structure_version++;
-    if (t->on_add) {
+    if (t->on_add && !w->loading) {
         t->on_add(w, e, data);
         data = a3_component_get(w, e, type_id); /* hook may add components and move memory */
     }

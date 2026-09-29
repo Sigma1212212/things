@@ -34,6 +34,7 @@ file(GLOB A3_SHARED_SOURCES CONFIGURE_DEPENDS
   engine/input/*.c
   engine/physics/*.c
   engine/resource/*.c
+  engine/ui/*.c
 )
 # Renderer front-end is API independent; it talks to a backend through a3_rhi.h
 list(APPEND A3_SHARED_SOURCES
@@ -71,9 +72,17 @@ if(UNIX AND NOT APPLE)
   target_include_directories(asm3d_desktop PUBLIC ${X11_INCLUDE_DIR})
   target_compile_options(asm3d_desktop PRIVATE ${A3_WARNINGS})
 
+  add_executable(asm3d_ui_gallery apps/ui_gallery/main.c)
+  target_link_libraries(asm3d_ui_gallery PRIVATE asm3d_desktop)
+
   add_executable(asm3d_player apps/player/main.c)
   target_link_libraries(asm3d_player PRIVATE asm3d_desktop)
   target_compile_options(asm3d_player PRIVATE ${A3_WARNINGS})
+
+  file(GLOB A3_EDITOR_SOURCES CONFIGURE_DEPENDS apps/editor/*.c)
+  add_executable(asm3d_editor ${A3_EDITOR_SOURCES})
+  target_link_libraries(asm3d_editor PRIVATE asm3d_desktop)
+  target_compile_options(asm3d_editor PRIVATE ${A3_WARNINGS})
 endif()
 
 # ---- Tests ----

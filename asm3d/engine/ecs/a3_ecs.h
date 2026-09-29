@@ -68,6 +68,7 @@ struct A3World {
     A3Entity first_root, last_root; /* ordered root list (hierarchy panel order) */
     u32 hierarchy_version; /* bumped on any parent/child change */
     u32 structure_version; /* bumped on create/destroy/add/remove */
+    u32 loading;           /* > 0 while deserializing: on_add hooks are skipped (data comes from the file) */
     void *user;            /* owner (scene, editor) */
     char name[A3_NAME_MAX];
 };
@@ -104,6 +105,8 @@ A3Entity a3_entity_duplicate(A3World *w, A3Entity e);
 
 /* ---- Hierarchy ---- */
 b32      a3_entity_set_parent(A3World *w, A3Entity child, A3Entity parent); /* NULL parent = root; rejects cycles */
+/* Moves e to position `index` among its siblings (clamped). */
+void     a3_entity_set_sibling_index(A3World *w, A3Entity e, u32 index);
 A3Entity a3_entity_parent(const A3World *w, A3Entity e);
 A3Entity a3_entity_first_child(const A3World *w, A3Entity e);
 A3Entity a3_entity_next_sibling(const A3World *w, A3Entity e);

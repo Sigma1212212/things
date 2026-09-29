@@ -52,6 +52,11 @@ A3Result a3_entities_save_json(A3World *w, const A3Entity *roots, u32 count, A3S
  * Internal references are remapped. Returns number of roots created. */
 u32 a3_entities_load_json(A3World *w, const char *text, usize len, A3Entity parent, A3Entity *out_roots, u32 max_roots);
 
+/* Serializes one entity subtree in scene format, keeping GUIDs and the
+ * root's parent reference (used by undo/redo: reloading it with
+ * a3_scene_load_json restores the exact entities). */
+A3Result a3_scene_save_subtree_json(A3World *w, A3Entity root, A3StrBuf *out);
+
 /* Component-level helpers. */
 void a3_component_write_json(A3JsonWriter *jw, const A3ComponentType *t, const void *data);
 /* Reads fields present in obj into data; returns number of missing fields. */

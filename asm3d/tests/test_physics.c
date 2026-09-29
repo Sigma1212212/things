@@ -8,6 +8,8 @@
 #include "../engine/resource/a3_assets.h"
 #include "../engine/core/a3_string.h"
 #include "../engine/core/a3_hash.h"
+#include "../engine/core/a3_strbuf.h"
+#include "../engine/scene/a3_scene_io.h"
 
 static void setup(void) {
     a3_register_core_components();
@@ -240,5 +242,36 @@ A3_TEST(physics_cross_target_golden) {
     a3_hash_to_hex(h, hex);
     A3_CHECK_MSG(h == A3_PHYSICS_GOLDEN, "physics state hash %s differs from golden", hex);
     a3_physics_release(w);
+    a3_world_destroy(w);
+}
+
+/* Regression: loading a scene must not re-run on_add hooks (the character
+ * controller used to add a second camera child on every load). */
+A3_TEST(physics_character_scene_roundtrip) {
+    setup();
+    A3World *w = a3_world_create("rt");
+    A3Entity p = a3_entity_create(w, "Player");
+    a3_component_add(w, p, A3_T_TRANSFORM);
+    a3_component_add(w, p, A3_T_CHARACTER);
+    u32 n0 = a3_world_entity_count(w);
+    A3_CHECK_EQ_INT(a3_entity_child_count(w, p), 1);
+    A3StrBuf sb;
+    a3_strbuf_init(&sb, A3_MEM_TEMP);
+    A3_CHECK(a3_scene_save_json(w, &sb, 0) == A3_OK);
+    A3World *w2 = a3_world_create("rt2");
+    A3SceneLoadReport rep;
+    A3_CHECK(a3_scene_load_json(w2, sb.data, sb.len, &rep) == A3_OK);
+    A3_CHECK_EQ_INT(a3_world_entity_count(w2), n0);
+    A3Entity p2 = a3_entity_find_by_name(w2, "Player");
+    A3_CHECK(a3_entity_valid(w2, p2));
+    A3_CHECK_EQ_INT(a3_entity_child_count(w2, p2), 1);
+    A3_CHECK_EQ_INT(w2->loading, 0);
+    /* hooks still run for components added after loading */
+    A3Entity q = a3_entity_create(w2, "Other");
+    a3_component_add(w2, q, A3_T_TRANSFORM);
+    a3_component_add(w2, q, A3_T_CHARACTER);
+    A3_CHECK_EQ_INT(a3_entity_child_count(w2, q), 1);
+    a3_strbuf_free(&sb);
+    a3_world_destroy(w2);
     a3_world_destroy(w);
 }

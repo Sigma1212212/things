@@ -90,6 +90,9 @@ void a3_engine_end_frame(A3Engine *e);
 u64  a3_engine_frame_index(A3Engine *e);
 f64  a3_engine_play_time(A3Engine *e);
 f32  a3_engine_fixed_dt(A3Engine *e);
+/* Input seen by systems (NULL = window input). The editor passes an empty
+ * state while the game viewport does not have focus. */
+void a3_engine_set_input_override(A3Engine *e, const A3InputState *input);
 /* Saves the window contents as PNG. */
 b32  a3_engine_screenshot(A3Engine *e, const char *path);
 

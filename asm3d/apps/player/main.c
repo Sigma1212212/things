@@ -14,6 +14,7 @@
 #include "../../engine/core/a3_string.h"
 #include "../../engine/core/a3_format.h"
 #include "../../engine/platform/a3_platform.h"
+#include "../../engine/core/a3_json.h"
 #include <stdlib.h>
 
 static A3Entity spawn(A3World *w, const char *name, A3Primitive prim, A3Vec3 pos, A3Vec3 scale, A3Vec4 color) {
@@ -67,6 +68,28 @@ static void build_demo(A3World *w) {
     a3_component_add(w, cam, A3_T_CAMERA);
 }
 
+/* Reads startupScene / window settings from <dir>/project.a3proj. */
+static b32 read_project(const char *dir, char *scene, usize scene_cap, char *title, usize title_cap, int *w, int *h) {
+    char path[1024];
+    a3_path_join(path, sizeof(path), dir, "project.a3proj");
+    A3FileData fd;
+    if (a3_file_read_all(path, A3_MEM_TEMP, &fd) != A3_OK) return 0;
+    A3Arena ar;
+    a3_arena_init(&ar, A3_MEM_TEMP, 8192);
+    A3Json *root = a3_json_parse((const char *)fd.data, fd.size, &ar, 0);
+    b32 ok = root != 0;
+    if (ok) {
+        a3_strcpy(scene, scene_cap, a3_json_get_string(root, "startupScene", ""));
+        A3Json *win = a3_json_get(root, "window");
+        a3_strcpy(title, title_cap, a3_json_get_string(win, "title", a3_json_get_string(root, "name", "ASM3D Game")));
+        *w = (int)a3_json_get_number(win, "width", *w);
+        *h = (int)a3_json_get_number(win, "height", *h);
+    }
+    a3_arena_release(&ar);
+    a3_free(fd.data);
+    return ok;
+}
+
 int main(int argc, char **argv) {
     const char *project = "", *scene = 0, *shot = 0;
     int frames = -1, width = 1280, height = 720;
@@ -85,7 +108,21 @@ int main(int argc, char **argv) {
             if (x) height = atoi(x + 1);
         }
     }
-    A3EngineDesc d = { "ASM3D Player", width, height, 1, hidden, 1, project, 60 };
+    /* A built game ships as <exe> + data/: find it automatically. */
+    static char auto_project[1024], proj_scene[512], title[128] = "ASM3D Player";
+    if (!project[0] && !demo) {
+        char exe_dir[1024];
+        if (a3_get_exe_dir(exe_dir, sizeof(exe_dir))) {
+            a3_path_join(auto_project, sizeof(auto_project), exe_dir, "data");
+            char probe[1100];
+            a3_path_join(probe, sizeof(probe), auto_project, "project.a3proj");
+            if (a3_file_exists(probe)) project = auto_project;
+        }
+    }
+    if (project[0]) {
+        if (read_project(project, proj_scene, sizeof(proj_scene), title, sizeof(title), &width, &height) && !scene && proj_scene[0]) scene = proj_scene;
+    }
+    A3EngineDesc d = { title, width, height, 1, hidden, 1, project, 60 };
     A3Engine *eng = a3_engine_create(&d);
     if (!eng) {
         A3_FATAL("player", "could not start the engine (see errors above)");
