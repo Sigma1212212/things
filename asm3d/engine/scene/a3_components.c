@@ -101,13 +101,13 @@ void a3_register_core_components(void) {
     /* WorldSettings */
     A3CWorldSettings wd;
     a3_zero_struct(&wd);
-    wd.sky_top = a3_v4(0.25f, 0.45f, 0.85f, 1);
-    wd.sky_horizon = a3_v4(0.75f, 0.85f, 0.95f, 1);
+    wd.sky_top = a3_v4(0.32f, 0.55f, 0.88f, 1);
+    wd.sky_horizon = a3_v4(0.75f, 0.84f, 0.93f, 1);
     wd.ground_color = a3_v4(0.35f, 0.32f, 0.28f, 1);
     wd.ambient = a3_v4(0.55f, 0.6f, 0.7f, 1);
-    wd.fog_color = a3_v4(0.7f, 0.78f, 0.88f, 1);
+    wd.fog_color = a3_v4(0.72f, 0.8f, 0.9f, 1);
     wd.fog_density = 0.002f;
-    wd.ambient_intensity = 0.35f;
+    wd.ambient_intensity = 0.45f;
     wd.time_of_day = 14.0f;
     wd.gravity = a3_v3(0, -9.81f, 0);
     wd.day_length_minutes = 20.0f;

@@ -202,15 +202,15 @@ void a3_rhi_buffer_destroy(A3RhiBuffer h) {
 /* Meshes                                                                   */
 /* ======================================================================== */
 
-static void apply_layout(const A3VertexLayout *l, b32 instances) {
+static void apply_layout(const A3VertexLayout *l, b32 instances, usize base) {
     for (u32 i = 0; i < l->count; ++i) {
         const A3VertexAttrib *a = &l->attribs[i];
         glEnableVertexAttribArray(a->location);
         if (a->type == A3_ATTR_UINT)
-            glVertexAttribIPointer(a->location, (GLint)a->components, GL_UNSIGNED_INT, (GLsizei)l->stride, (const void *)(uptr)a->offset);
+            glVertexAttribIPointer(a->location, (GLint)a->components, GL_UNSIGNED_INT, (GLsizei)l->stride, (const void *)(uptr)(base + a->offset));
         else
             glVertexAttribPointer(a->location, (GLint)a->components, a->type == A3_ATTR_FLOAT ? GL_FLOAT : GL_UNSIGNED_BYTE,
-                                  a->type == A3_ATTR_UBYTE_NORM, (GLsizei)l->stride, (const void *)(uptr)a->offset);
+                                  a->type == A3_ATTR_UBYTE_NORM, (GLsizei)l->stride, (const void *)(uptr)(base + a->offset));
         glVertexAttribDivisor(a->location, (instances || a->per_instance) ? 1 : 0);
     }
 }
@@ -225,7 +225,7 @@ A3RhiMesh a3_rhi_mesh_create(A3RhiBuffer vertices, const A3VertexLayout *layout,
     glGenVertexArrays(1, &m->vao);
     glBindVertexArray(m->vao);
     glBindBuffer(GL_ARRAY_BUFFER, g_gl.buffers[vertices.id - 1].name);
-    apply_layout(layout, 0);
+    apply_layout(layout, 0, 0);
     if (HANDLE_OK(buffers, indices, MAX_BUFFERS)) {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_gl.buffers[indices.id - 1].name);
         m->has_indices = 1;
@@ -237,11 +237,11 @@ A3RhiMesh a3_rhi_mesh_create(A3RhiBuffer vertices, const A3VertexLayout *layout,
     return h;
 }
 
-void a3_rhi_mesh_set_instances(A3RhiMesh h, A3RhiBuffer instances, const A3VertexLayout *layout) {
+void a3_rhi_mesh_set_instances(A3RhiMesh h, A3RhiBuffer instances, const A3VertexLayout *layout, usize byte_offset) {
     if (!HANDLE_OK(meshes, h, MAX_MESHES) || !HANDLE_OK(buffers, instances, MAX_BUFFERS) || !layout) return;
     glBindVertexArray(g_gl.meshes[h.id - 1].vao);
     glBindBuffer(GL_ARRAY_BUFFER, g_gl.buffers[instances.id - 1].name);
-    apply_layout(layout, 1);
+    apply_layout(layout, 1, byte_offset);
     glBindVertexArray(0);
 }
 
@@ -264,6 +264,7 @@ static void tex_format(A3TexFormat f, GLint *internal, GLenum *format, GLenum *t
     case A3_TEX_RGBA32F: *internal = GL_RGBA32F; *format = GL_RGBA; *type = GL_FLOAT; *bpp = 16; break;
     case A3_TEX_DEPTH24: *internal = GL_DEPTH_COMPONENT24; *format = GL_DEPTH_COMPONENT; *type = GL_UNSIGNED_INT; *bpp = 4; break;
     case A3_TEX_DEPTH32F: *internal = 0x8CAC /* GL_DEPTH_COMPONENT32F */; *format = GL_DEPTH_COMPONENT; *type = GL_FLOAT; *bpp = 4; break;
+    case A3_TEX_SRGBA8: *internal = 0x8C43 /* GL_SRGB8_ALPHA8 */; *format = GL_RGBA; *type = GL_UNSIGNED_BYTE; *bpp = 4; break;
     default: *internal = GL_RGBA8; *format = GL_RGBA; *type = GL_UNSIGNED_BYTE; *bpp = 4; break;
     }
 }

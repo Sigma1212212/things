@@ -23,7 +23,7 @@ typedef enum A3BufferType { A3_BUFFER_VERTEX = 0, A3_BUFFER_INDEX, A3_BUFFER_UNI
 
 typedef enum A3TexFormat {
     A3_TEX_RGBA8 = 0, A3_TEX_R8, A3_TEX_RGBA16F, A3_TEX_R16F, A3_TEX_RG16F, A3_TEX_RGBA32F,
-    A3_TEX_DEPTH24, A3_TEX_DEPTH32F, A3_TEX_FORMAT_COUNT
+    A3_TEX_DEPTH24, A3_TEX_DEPTH32F, A3_TEX_SRGBA8, A3_TEX_FORMAT_COUNT
 } A3TexFormat;
 
 typedef enum A3TexFilter { A3_FILTER_LINEAR = 0, A3_FILTER_NEAREST, A3_FILTER_TRILINEAR } A3TexFilter;
@@ -127,8 +127,9 @@ void a3_rhi_buffer_destroy(A3RhiBuffer b);
 
 /* ---- Meshes (vertex array objects) ---- */
 A3RhiMesh a3_rhi_mesh_create(A3RhiBuffer vertices, const A3VertexLayout *layout, A3RhiBuffer indices, b32 index32);
-/* Attaches a per-instance buffer with its own layout (attribs marked per_instance). */
-void a3_rhi_mesh_set_instances(A3RhiMesh m, A3RhiBuffer instances, const A3VertexLayout *layout);
+/* Points the per-instance attributes at `instances` starting at byte_offset
+ * (one shared instance buffer serves all batches in a frame). */
+void a3_rhi_mesh_set_instances(A3RhiMesh m, A3RhiBuffer instances, const A3VertexLayout *layout, usize byte_offset);
 void a3_rhi_mesh_destroy(A3RhiMesh m);
 
 /* ---- Textures ---- */

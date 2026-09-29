@@ -54,6 +54,26 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(asm3d_engine PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
 
+# ---- Desktop runtime (window, GPU, renderer, assets, engine loop) ----
+if(UNIX AND NOT APPLE)
+  find_package(X11 REQUIRED)
+  file(GLOB A3_DESKTOP_SOURCES CONFIGURE_DEPENDS
+    engine/render/*.c
+    engine/resource/*.c
+    engine/runtime/*.c
+  )
+  list(REMOVE_ITEM A3_DESKTOP_SOURCES ${CMAKE_SOURCE_DIR}/engine/render/a3_mesh.c)
+  list(APPEND A3_DESKTOP_SOURCES engine/platform/window_x11.c)
+  add_library(asm3d_desktop STATIC ${A3_DESKTOP_SOURCES})
+  target_link_libraries(asm3d_desktop PUBLIC asm3d_engine ${X11_LIBRARIES})
+  target_include_directories(asm3d_desktop PUBLIC ${X11_INCLUDE_DIR})
+  target_compile_options(asm3d_desktop PRIVATE ${A3_WARNINGS})
+
+  add_executable(asm3d_player apps/player/main.c)
+  target_link_libraries(asm3d_player PRIVATE asm3d_desktop)
+  target_compile_options(asm3d_player PRIVATE ${A3_WARNINGS})
+endif()
+
 # ---- Tests ----
 file(GLOB A3_TEST_SOURCES CONFIGURE_DEPENDS tests/*.c)
 add_executable(asm3d_tests ${A3_TEST_SOURCES})

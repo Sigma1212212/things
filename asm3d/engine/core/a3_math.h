@@ -135,6 +135,14 @@ A3_INLINE A3Vec4 a3_v4_scale(A3Vec4 a, f32 s) { return a3_v4(a.x * s, a.y * s, a
 A3_INLINE f32 a3_v4_dot(A3Vec4 a, A3Vec4 b) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
 A3_INLINE A3Vec4 a3_v4_lerp(A3Vec4 a, A3Vec4 b, f32 t) { return a3_v4(a3_lerpf(a.x, b.x, t), a3_lerpf(a.y, b.y, t), a3_lerpf(a.z, b.z, t), a3_lerpf(a.w, b.w, t)); }
 
+/* ---- Color ----
+ * Colors shown in the editor (color pickers, textures) are sRGB. Lighting
+ * math happens in linear space, so colors are converted on the way in. */
+f32 a3_srgb_to_linear(f32 c);
+f32 a3_linear_to_srgb(f32 c);
+A3_INLINE A3Vec4 a3_color_to_linear(A3Vec4 c) { return a3_v4(a3_srgb_to_linear(c.x), a3_srgb_to_linear(c.y), a3_srgb_to_linear(c.z), c.w); }
+A3_INLINE A3Vec3 a3_color3_to_linear(A3Vec4 c) { return a3_v3(a3_srgb_to_linear(c.x), a3_srgb_to_linear(c.y), a3_srgb_to_linear(c.z)); }
+
 /* ---- Quaternion ---- */
 A3_INLINE A3Quat a3_quat(f32 x, f32 y, f32 z, f32 w) { A3Quat q = { x, y, z, w }; return q; }
 A3_INLINE A3Quat a3_quat_identity(void) { return a3_quat(0, 0, 0, 1); }
