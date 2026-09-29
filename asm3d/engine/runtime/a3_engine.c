@@ -36,9 +36,14 @@ struct A3Engine {
     b32 playing;
     const A3InputState *input_override; /* editor: game input only while the viewport has focus */
     A3Ui *hud_ui;                        /* script HUD overlay (created on first use) */
+    b32 headless;                        /* no window, GPU or audio device (tools, servers, CI) */
+    A3InputState headless_input;
 };
 
-static const A3InputState *game_input(A3Engine *e) { return e->input_override ? e->input_override : a3_window_input(e->window); }
+static const A3InputState *game_input(A3Engine *e) {
+    if (e->input_override) return e->input_override;
+    return e->window ? a3_window_input(e->window) : &e->headless_input;
+}
 
 void a3_engine_set_input_override(A3Engine *e, const A3InputState *input) { if (e) e->input_override = input; }
 
@@ -108,14 +113,32 @@ A3Engine *a3_engine_create(const A3EngineDesc *desc) {
     return e;
 }
 
+A3Engine *a3_engine_create_headless(const char *project_root, f32 fixed_hz) {
+    a3_platform_init();
+    a3_engine_register_all();
+    A3Engine *e = A3_NEW(A3Engine, A3_MEM_CORE);
+    if (!e) return 0;
+    e->headless = 1;
+    a3_assets_init(project_root ? project_root : "");
+    a3_input_map_defaults(&e->input_map);
+    a3_jobs_init(0);
+    A3AudioDesc ad;
+    a3_zero_struct(&ad);
+    ad.null_device = 1; /* sounds are mixed nowhere */
+    a3_audio_init(&ad);
+    e->fixed_dt = 1.0f / (fixed_hz > 0 ? fixed_hz : 60.0f);
+    e->last_ns = a3_time_ns();
+    return e;
+}
+
 void a3_engine_destroy(A3Engine *e) {
     if (!e) return;
     a3_audio_shutdown();
-    a3_ui_destroy(e->hud_ui);
-    a3_renderer_destroy(e->renderer);
+    if (e->hud_ui) a3_ui_destroy(e->hud_ui);
+    if (e->renderer) a3_renderer_destroy(e->renderer);
     a3_assets_shutdown();
-    a3_rhi_shutdown();
-    a3_window_destroy(e->window);
+    if (!e->headless) a3_rhi_shutdown();
+    if (e->window) a3_window_destroy(e->window);
     a3_jobs_shutdown();
     a3_free(e);
 }
@@ -123,14 +146,15 @@ void a3_engine_destroy(A3Engine *e) {
 A3Window *a3_engine_window(A3Engine *e) { return e ? e->window : 0; }
 A3Renderer *a3_engine_renderer(A3Engine *e) { return e ? e->renderer : 0; }
 A3InputMap *a3_engine_input_map(A3Engine *e) { return e ? &e->input_map : 0; }
-const A3InputState *a3_engine_input(A3Engine *e) { return e ? a3_window_input(e->window) : 0; }
+const A3InputState *a3_engine_input(A3Engine *e) { return e ? (e->window ? a3_window_input(e->window) : &e->headless_input) : 0; }
+b32 a3_engine_is_headless(A3Engine *e) { return e && e->headless; }
 u64 a3_engine_frame_index(A3Engine *e) { return e ? e->frame : 0; }
 f64 a3_engine_play_time(A3Engine *e) { return e ? e->play_time : 0; }
 f32 a3_engine_fixed_dt(A3Engine *e) { return e ? e->fixed_dt : 1.0f / 60.0f; }
 
 b32 a3_engine_begin_frame(A3Engine *e, f32 *out_dt) {
     if (!e) return 0;
-    b32 alive = a3_window_poll(e->window);
+    b32 alive = e->window ? a3_window_poll(e->window) : 1;
     u64 now = a3_time_ns();
     f32 dt = (f32)((f64)(now - e->last_ns) * 1e-9);
     e->last_ns = now;
@@ -138,7 +162,7 @@ b32 a3_engine_begin_frame(A3Engine *e, f32 *out_dt) {
     if (dt < 0.0f) dt = 0.0f;
     if (out_dt) *out_dt = dt;
     a3_frame_alloc_begin();
-    a3_rhi_begin_frame();
+    if (!e->headless) a3_rhi_begin_frame();
     return alive;
 }
 
@@ -209,7 +233,7 @@ void a3_engine_simulate(A3Engine *e, A3World *w, f32 dt, b32 paused, b32 step) {
 }
 
 void a3_engine_render_world(A3Engine *e, A3World *w, const A3RenderView *view) {
-    if (!e || !w) return;
+    if (!e || !w || !e->renderer) return;
     i32 ww, wh;
     a3_window_size(e->window, &ww, &wh);
     A3RenderView v;
@@ -228,7 +252,7 @@ void a3_engine_render_world(A3Engine *e, A3World *w, const A3RenderView *view) {
 
 void a3_engine_render_hud(A3Engine *e, A3World *w) {
     const A3HudCmd *cmds;
-    if (!e || !w || !a3_scripts_hud(w, &cmds)) return;
+    if (!e || !w || e->headless || !a3_scripts_hud(w, &cmds)) return;
     if (!e->hud_ui && !(e->hud_ui = a3_ui_create())) return;
     i32 ww, wh;
     a3_window_size(e->window, &ww, &wh);
@@ -242,13 +266,14 @@ void a3_engine_render_hud(A3Engine *e, A3World *w) {
 
 void a3_engine_end_frame(A3Engine *e) {
     if (!e) return;
+    if (e->headless) { e->frame++; return; }
     a3_rhi_end_frame();
     a3_window_swap(e->window);
     e->frame++;
 }
 
 b32 a3_engine_screenshot(A3Engine *e, const char *path) {
-    if (!e) return 0;
+    if (!e || e->headless) return 0;
     i32 w, h;
     a3_window_size(e->window, &w, &h);
     u8 *px = (u8 *)a3_malloc((usize)w * h * 4, A3_MEM_TEMP);

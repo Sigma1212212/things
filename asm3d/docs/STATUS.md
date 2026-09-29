@@ -70,6 +70,18 @@ listed. **Planned** = not implemented yet.
 | Animation timeline panel | Working | Key, scrub, preview (the object is restored afterwards), drag keys, set interpolation. |
 | Visual script editor, terrain tools | Planned | |
 
+## Command line (`asm3d_cli`)
+
+| Feature | Status | Notes |
+|---|---|---|
+| JSON output for every command, batch mode (JSON Lines) | Working | See docs/CLI.md. |
+| Projects, scenes, objects, components (create, inspect, edit) | Working | Objects by name, path or GUID; "did you mean" hints. |
+| Script check / run / eval | Working | |
+| Headless simulation with scripted key input, traces and HUD text | Working | No window or GPU needed (`a3_engine_create_headless`). |
+| Validate and build | Working | Shared with the editor (`engine/runtime/a3_project.c`); validation also compiles every script. |
+| Screenshots | Working | Needs OpenGL 3.3 (a desktop session, or Xvfb on Linux servers). |
+| Project templates from the command line | Planned | `project new` makes the starter scene only; templates live in the editor. |
+
 ## Games
 
 Two complete example games are **planned**. The 10 templates are playable
@@ -82,10 +94,12 @@ collect 12 orbs, with a HUD counter, a timer and a best time saved between runs.
   scenarios, shader graph, audio, particles, animation, the scripting
   language and its engine bindings). They run natively and as WebAssembly
   (`node tools/run_wasm_tests.mjs build/asm3d_tests.wasm`).
+- `tools/test_cli.py`: 64 end-to-end checks of `asm3d_cli` (Linux and
+  Windows builds).
 - `asm3d_editor --selftest`: drives the real editor end to end. It creates a
   project, runs undo/redo, play/stop, save/reopen and a build, compiles every
   Shader Maker preset on the GPU, checks that shader errors are mapped to
   the right node, runs a script in play mode (including hot reload and error
-  markers) and collects an orb in the scripted Platformer template (55 checks).
+  markers) and collects an orb in the scripted Platformer template (56 checks).
 - `asm3d_player --frames N --screenshot out.png` and
   `asm3d_editor --frames N --screenshot out.png` are used for visual checks.

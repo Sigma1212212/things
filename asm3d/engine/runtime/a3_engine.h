@@ -72,6 +72,9 @@ typedef struct A3EngineDesc {
 void a3_engine_register_all(void);
 
 A3Engine *a3_engine_create(const A3EngineDesc *desc);
+/* No window, GPU or audio device: simulation only (command-line tools, servers, CI). */
+A3Engine *a3_engine_create_headless(const char *project_root, f32 fixed_hz);
+b32 a3_engine_is_headless(A3Engine *e);
 void a3_engine_destroy(A3Engine *e);
 A3Window *a3_engine_window(A3Engine *e);
 A3Renderer *a3_engine_renderer(A3Engine *e);

@@ -358,11 +358,24 @@ void a3_jw_node(A3JsonWriter *w, const A3Json *n) {
     case A3_JSON_BOOL: a3_jw_bool(w, n->v.boolean); break;
     case A3_JSON_NUMBER: a3_jw_number(w, n->v.number); break;
     case A3_JSON_STRING: a3_jw_string(w, n->v.string); break;
-    case A3_JSON_ARRAY:
+    case A3_JSON_ARRAY: {
+        /* short number arrays (vectors, colors) stay on one line */
+        b32 numbers = n->v.children.count > 0 && n->v.children.count <= 16;
+        for (const A3Json *c = n->v.children.first; c && numbers; c = c->next) if (c->type != A3_JSON_NUMBER) numbers = 0;
+        if (numbers) {
+            jw_prefix(w);
+            a3_strbuf_append_char(w->out, '[');
+            for (const A3Json *c = n->v.children.first; c; c = c->next) {
+                if (c != n->v.children.first) a3_strbuf_append(w->out, w->compact ? "," : ", ");
+                jw_num_raw(w->out, c->v.number);
+            }
+            a3_strbuf_append_char(w->out, ']');
+            break;
+        }
         a3_jw_begin_array(w);
         for (const A3Json *c = n->v.children.first; c; c = c->next) a3_jw_node(w, c);
         a3_jw_end_array(w);
-        break;
+    } break;
     case A3_JSON_OBJECT:
         a3_jw_begin_object(w);
         for (const A3Json *c = n->v.children.first; c; c = c->next) { a3_jw_key(w, c->key ? c->key : ""); a3_jw_node(w, c); }

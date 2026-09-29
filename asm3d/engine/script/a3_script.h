@@ -77,6 +77,9 @@ b32  a3s_list_push(A3SValue *list, const A3SValue *item); /* retains item */
 void a3s_to_string(const A3SValue *v, char *buf, usize cap);
 const char *a3s_type_name(u32 type);
 
+/* "Did you mean 'x'?" into out (empty when nothing is close). Used by tools too. */
+void a3s_suggest(const char *name, const char *const *candidates, u32 count, char *out, usize cap);
+
 /* ---- natives (standard library and engine API) ---- */
 typedef b32 (*A3SNativeFn)(A3SVM *vm, A3SValue *args, u32 argc, A3SValue *result);
 typedef struct A3SNative {

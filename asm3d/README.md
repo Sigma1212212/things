@@ -8,6 +8,8 @@ Gameplay is written in A3Script, the engine's own scripting language
 code or libraries (only the OS windowing API and OpenGL from the system). It runs on Windows and Linux.
 
 See [docs/STATUS.md](docs/STATUS.md) for exactly what works today.
+`asm3d_cli` exposes the engine to scripts, CI and AI assistants with JSON
+output ([docs/CLI.md](docs/CLI.md)).
 
 ## Windows
 
@@ -49,6 +51,7 @@ In the editor, pick a template, press **F5** to play, and use
 ./build/asm3d_tests                                   # native (assembly kernels)
 node tools/run_wasm_tests.mjs build/asm3d_tests.wasm  # WebAssembly (C kernels)
 ./build/asm3d_editor --selftest                       # editor end to end (needs a display)
+python3 tools/test_cli.py build/asm3d_cli             # command-line tool end to end
 ```
 
 ## Layout
@@ -68,5 +71,6 @@ engine/ui        immediate-mode UI toolkit, docking
 engine/runtime   engine loop, systems, modules
 apps/editor      the editor
 apps/player      the game player (built games are this program + data/)
+apps/cli         asm3d_cli, the JSON command-line tool
 tests            unit, determinism and scenario tests
 ```

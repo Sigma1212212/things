@@ -62,7 +62,6 @@ struct A3SInstance {
 /* VM entry used by a3s_instance_create / a3s_call */
 b32 a3s_vm_run(A3SInstance *inst, u32 func, const A3SValue *args, u32 argc, A3SValue *result, A3SError *err);
 i32 a3s_native_find(const char *name);
-void a3s_suggest(const char *name, const char *const *candidates, u32 count, char *out, usize cap);
 const A3SHost *a3s_host(void);
 A3SValue a3s_str_concat(const A3SValue *a, const A3SValue *b);
 

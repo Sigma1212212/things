@@ -880,6 +880,10 @@ static int selftest_run(A3Editor *ed, const char *tmp) {
         ST_CHECK(a3_file_write_atomic(bp, bad, a3_strlen(bad)) == A3_OK);
         i32 bd = ed_code_open(ed, "Assets/Scripts/Bad.a3script");
         ST_CHECK(bd >= 0 && ed->docs[bd].error_count == 1 && ed->docs[bd].error_lines[0] == 2);
+        /* the project check compiles every script: a broken one is an error */
+        u32 se = 0, sw = 0;
+        ST_CHECK(ed_validate_project(ed, 0, &se, &sw) && se == 1);
+        a3_file_delete(bp);
     }
     /* save + reopen */
     ST_CHECK(ed_scene_save(ed));
