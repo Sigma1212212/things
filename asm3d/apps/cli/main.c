@@ -26,6 +26,7 @@
 #include "../../engine/modeling/a3_modeling_kernels.h"
 #include "../../engine/resource/a3_assets.h"
 #include "../../engine/world/a3_citygen.h"
+#include "../../engine/world/a3_traffic.h"
 #include "../../engine/core/a3_log.h"
 #include "../../engine/core/a3_string.h"
 #include "../../engine/core/a3_format.h"
@@ -874,7 +875,14 @@ static b32 c_entity_set(const Args *a) {
     if (!w) return 0;
     A3Entity e = find_entity(w, arg(a, 1));
     b32 ok = !a3_entity_is_null(e);
-    for (u32 i = 2; ok && i + 1 < a->npos; i += 2) ok = set_field(w, e, a->pos[i], a->pos[i + 1]);
+    for (u32 i = 2; ok && i + 1 < a->npos; i += 2) {
+        const char *key = a->pos[i], *val = a->pos[i + 1];
+        if (a3_streq(key, "active")) {   /* the object's own enabled flag */
+            b32 on = a3_streq(val, "true") || a3_streq(val, "1") || a3_streq(val, "yes");
+            if (!on && !a3_streq(val, "false") && !a3_streq(val, "0") && !a3_streq(val, "no")) ok = fail("Use true or false.", "'%s' is not true/false", val);
+            else a3_entity_set_active(w, e, on);
+        } else ok = set_field(w, e, key, val);
+    }
     if (ok) ok = save_scene(w, arg(a, 0), a);
     if (ok) { a3_jw_key(R(), "object"); write_entity(R(), w, e, 1); }
     a3_world_destroy(w);
@@ -1151,6 +1159,9 @@ static b32 run_game(const Args *a, b32 render) {
     a3_engine_set_input_override(eng, &input);
     a3_engine_start_play(eng, w);
     u64 t0 = a3_time_ns();
+    const char *record = render ? opt(a, "record", 0) : 0;
+    i32 record_from = atoi(opt(a, "record-from", "0")), recorded = 0;
+    if (record) a3_dir_create(record);
     i32 trace_every = atoi(opt(a, "trace", "0"));
     const char *watch = opt(a, "watch", 0);
     if (trace_every > 0 && watch) { a3_jw_key(R(), "trace"); a3_jw_begin_array(R()); }
@@ -1163,7 +1174,17 @@ static b32 run_game(const Args *a, b32 render) {
         f32 real_dt;
         a3_engine_begin_frame(eng, &real_dt);
         a3_engine_simulate(eng, w, dt, 0, 0);
-        if (render) a3_engine_render_world(eng, w, 0);
+        /* rendering is slow without a GPU: only the last frames (or every frame when recording) */
+        b32 draw = render && (f >= frames - 3 || record || has_opt(a, "render-all"));
+        if (draw) a3_engine_render_world(eng, w, 0);
+        if (draw && record && f >= record_from) {
+            a3_engine_render_hud(eng, w);
+            char fp[PATHCAP], name[32];
+            a3_snprintf(name, sizeof(name), "frame_%05d.png", recorded);
+            a3_path_join(fp, sizeof(fp), record, name);
+            if (a3_engine_screenshot(eng, fp)) recorded++;
+            else { fail("Check that the record folder is writable.", "could not write %s", fp); a3_engine_end_frame(eng); break; }
+        }
         char next[512];
         if (a3_scripts_take_scene_request(w, next, sizeof(next))) A3_WARN("cli", "load_scene(\"%s\") requested at frame %d (not followed by simulate)", next, f);
         if (render && f == frames - 1) {
@@ -1175,7 +1196,7 @@ static b32 run_game(const Args *a, b32 render) {
                     a3_engine_render_world(eng, w, &v);
                     a3_engine_render_hud(eng, w);
                 }
-            }
+            } else if (!record) a3_engine_render_hud(eng, w);
             const char *out = opt(a, "out", "screenshot.png");
             if (a3_engine_screenshot(eng, out)) a3_jw_kv_string(R(), "screenshot", out);
             else fail("Check that the output folder exists.", "could not write %s", out);
@@ -1193,6 +1214,7 @@ static b32 run_game(const Args *a, b32 render) {
     a3_jw_kv_string(R(), "scene", scene);
     a3_jw_kv_int(R(), "frames", frames);
     a3_jw_kv_number(R(), "game_seconds", frames * dt);
+    if (record) { a3_jw_kv_string(R(), "recorded_to", record); a3_jw_kv_int(R(), "recorded_frames", recorded); }
     a3_jw_kv_number(R(), "real_seconds", secs);
     a3_jw_kv_int(R(), "object_count", a3_world_entity_count(w));
     a3_jw_kv_int(R(), "scripts_running", a3_scripts_instance_count(w));
@@ -1254,6 +1276,13 @@ static b32 c_world_city(const Args *a) {
     A3CityStats st;
     b32 ok = a3_city_generate(w, &d, &st, &roads);
     if (!ok) { a3_strbuf_free(&roads); a3_world_destroy(w); return fail(0, "city generation failed"); }
+    i32 cars = atoi(opt(a, "cars", "40")), peds = atoi(opt(a, "pedestrians", "60"));
+    if (!has_opt(a, "no-traffic") && (cars > 0 || peds > 0)) {
+        A3Entity te = a3_entity_create(w, "City Traffic");
+        a3_component_add(w, te, A3_T_TRANSFORM);
+        A3CTraffic *tr = (A3CTraffic *)a3_component_add(w, te, A3_T_TRAFFIC);
+        if (tr) { tr->cars = cars; tr->pedestrians = peds; tr->seed = (u32)d.seed; }
+    }
     if (!has_opt(a, "dry-run")) {
         a3_path_dirname(scene_path, folder, sizeof(folder));
         a3_dir_create(folder);
@@ -1316,7 +1345,7 @@ static const Cmd g_cmds[] = {
     { "entity", "list", c_entity_list, "entity list <scene>", "Objects in hierarchy order with depth and component names." },
     { "entity", "get", c_entity_get, "entity get <scene> <object> [Component[.field]]", "One object, component or field. Objects are found by name, Parent/Child path or GUID." },
     { "entity", "add", c_entity_add, "entity add <scene> <name> [--parent P] [--at x,y,z] [--rotation x,y,z] [--scale x,y,z] [--primitive cube] [--model path.obj] [--script path] [--with A,B]", "Creates an object." },
-    { "entity", "set", c_entity_set, "entity set <scene> <object> <Component.field> <value> [...]", "Sets fields; adds the component if missing. Values: 5, true, 1,2,3, [1,2,3], text, option names." },
+    { "entity", "set", c_entity_set, "entity set <scene> <object> <Component.field> <value> [...]  (or active true|false)", "Sets fields; adds the component if missing. Values: 5, true, 1,2,3, [1,2,3], text, option names." },
     { "entity", "remove", c_entity_remove, "entity remove <scene> <object>", "Deletes an object and its children." },
     { "entity", "rename", c_entity_rename, "entity rename <scene> <object> <new name>", "Renames an object." },
     { "entity", "duplicate", c_entity_duplicate, "entity duplicate <scene> <object> [--name N] [--at x,y,z]", "Copies an object with its children." },
@@ -1326,8 +1355,8 @@ static const Cmd g_cmds[] = {
     { "script", "run", c_script_run, "script run <file> [--call fn] [--args JSON-array]", "Runs a script outside a scene; returns print output, the return value and top-level variables." },
     { "script", "eval", c_script_eval, "script eval <expression>", "Evaluates one A3Script expression, e.g. \"lerp(0, 10, 0.25)\"." },
     { "simulate", 0, c_simulate, "simulate <project> [--scene S] [--frames 120] [--dt 0.0166] [--keys space@10-20,w@0-60] [--watch A,B] [--trace N]", "Plays the game headless (no window) and reports object states, script errors and HUD text." },
-    { "screenshot", 0, c_screenshot, "screenshot <project> [--scene S] [--frames 30] [--size 1280x720] [--camera x,y,z --look x,y,z] [--out file.png]", "Plays for some frames in a hidden window and saves an image (needs OpenGL)." },
-    { "world", "city", c_world_city, "world city <project> [--scene Assets/Scenes/City.a3scene] [--seed 1] [--time day|sunset|night] [--density 1] [--no-lights] [--no-neon] [--startup] [--all]", "Generates Sol Harbor, a coastal city (towers, Art Deco beachfront, causeways, port) plus its road graph in Assets/City/roads.json." },
+    { "screenshot", 0, c_screenshot, "screenshot <project> [--scene S] [--frames 30] [--size 1280x720] [--camera x,y,z --look x,y,z] [--out file.png] [--record dir [--record-from N]]", "Plays for some frames in a hidden window and saves an image (needs OpenGL). --record saves every frame of the game camera (with HUD) as frame_00000.png... for videos." },
+    { "world", "city", c_world_city, "world city <project> [--scene Assets/Scenes/City.a3scene] [--seed 1] [--time day|sunset|night] [--density 1] [--no-lights] [--no-neon] [--cars 40] [--pedestrians 60] [--no-traffic] [--startup] [--all]", "Generates Sol Harbor, a coastal city (towers, Art Deco beachfront, causeways, port) plus its road graph in Assets/City/roads.json." },
     { "mesh", "new", c_mesh_new, "mesh new <cube|plane|grid|cylinder|sphere|cone|torus> --out file.obj [--size 1] [--segments 16] [--rings 8] [--smooth]", "Creates a model with the modeling kernels." },
     { "mesh", "info", c_mesh_info, "mesh info <file.obj>", "Vertex, edge, face counts, bounds and whether the mesh is closed." },
     { "mesh", "edit", c_mesh_edit, "mesh edit <in.obj> --out <out.obj> --op <operation> [op options]...", "Applies modeling operations in order (see 'mesh ops')." },

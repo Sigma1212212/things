@@ -45,6 +45,27 @@ void a3_city_desc_default(A3CityDesc *d);
 b32  a3_city_generate(A3World *w, const A3CityDesc *d, A3CityStats *stats, A3StrBuf *graph_json);
 /* Applies the sky / sun / fog / post look for a time of day to the world. */
 void a3_city_apply_time(A3World *w, A3CityTime t);
+A3CityTime a3_city_time_from_name(const char *name);   /* "day", "sunset", "night" */
+
+/* City component: generates the city when the game starts, so a scene can
+ * hold a whole city in a few lines. The generated road graph stays in memory
+ * for the Traffic component (Roads = "generated"). */
+extern u32 A3_T_CITY;
+typedef struct A3CCity {
+    u32 seed;
+    f32 density;
+    i32 time;               /* A3CityTime */
+    b32 street_lights;
+    b32 neon;
+    b32 generated;          /* runtime */
+    f32 _pad[2];
+} A3CCity;
+
+void a3_city_register(void);
+/* Generates every City component that has not been generated yet. */
+void a3_city_update(A3World *w);
+/* Road graph JSON of the city generated in this world (NULL if none). */
+const char *a3_city_generated_roads(A3World *w, usize *len);
 
 A3_EXTERN_C_END
 

@@ -5,6 +5,9 @@
  * does not use a module (build-time stripping).
  */
 #include "../world/a3_procmeshes.h"
+#include "../world/a3_traffic.h"
+#include "../world/a3_citygen.h"
+#include "../physics/a3_vehicle.h"
 #include "a3_engine.h"
 #include "../physics/a3_physics.h"
 #include "../physics/a3_character.h"
@@ -94,6 +97,41 @@ static void sys_character_move(A3SystemContext *ctx, void *user) {
     }
 }
 
+/* ---- vehicles and traffic ---- */
+
+static void sys_vehicle_input(A3SystemContext *ctx, void *user) {
+    A3_UNUSED(user);
+    u32 n = 0;
+    const A3Entity *ents = 0;
+    A3CVehicle *vs = (A3CVehicle *)a3_component_array(ctx->world, A3_T_VEHICLE, &n, &ents);
+    for (u32 i = 0; i < n; ++i) {
+        if (!vs[i].use_input || !a3_entity_active(ctx->world, ents[i])) continue;
+        vs[i].throttle = a3_action_value(ctx->actions, ctx->input, "move_y");
+        vs[i].steer = a3_action_value(ctx->actions, ctx->input, "move_x");
+        vs[i].handbrake = a3_action_down(ctx->actions, ctx->input, "jump");
+    }
+}
+
+static void sys_city(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_city_update(ctx->world); }
+static void sys_traffic(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_traffic_update(ctx->world, ctx->dt); }
+static void sys_vehicles(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_vehicle_update_all(ctx->world, ctx->dt); }
+
+static void sys_chase_camera(A3SystemContext *ctx, void *user) {
+    A3_UNUSED(user);
+    A3Entity car = a3_vehicle_find_player(ctx->world);
+    if (a3_entity_is_null(car)) return;
+    A3CVehicle *v = (A3CVehicle *)a3_component_get(ctx->world, car, A3_T_VEHICLE);
+    if (!v || !v->chase_camera) return;
+    u32 n = 0;
+    const A3Entity *ents = 0;
+    A3CCamera *cams = (A3CCamera *)a3_component_array(ctx->world, A3_T_CAMERA, &n, &ents);
+    for (u32 i = 0; i < n; ++i) {
+        if (!cams[i].primary || !a3_entity_active(ctx->world, ents[i])) continue;
+        a3_vehicle_update_camera(ctx->world, car, v, ents[i], ctx->dt);
+        break;
+    }
+}
+
 /* ---- particles (also simulated while editing, for live preview) ---- */
 
 static void sys_particles(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_particles_update(ctx->world, ctx->dt); }
@@ -127,6 +165,7 @@ static void sys_audio_stop(A3SystemContext *ctx, void *user) { A3_UNUSED(user); 
 void a3_modules_register_all(void) {
     a3_procmeshes_register();
     a3_physics_register();
+    a3_traffic_register();
     a3_audio_register();
     a3_particles_register();
     a3_anim_register();
@@ -137,6 +176,42 @@ void a3_modules_register_all(void) {
     d.phase = A3_PHASE_EARLY;
     d.order = 10;
     d.update = sys_character_input;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "City Generator";
+    d.phase = A3_PHASE_EARLY;
+    d.order = -100;
+    d.update = sys_city;
+    d.on_start = sys_city;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "Vehicle Input";
+    d.phase = A3_PHASE_EARLY;
+    d.order = 12;
+    d.update = sys_vehicle_input;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "Traffic";
+    d.phase = A3_PHASE_FIXED;
+    d.order = 45;
+    d.update = sys_traffic;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "Vehicles";
+    d.phase = A3_PHASE_FIXED;
+    d.order = 55;
+    d.update = sys_vehicles;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "Chase Camera";
+    d.phase = A3_PHASE_LATE;
+    d.order = 5;
+    d.update = sys_chase_camera;
     a3_systems_register(&d);
 
     a3_zero_struct(&d);

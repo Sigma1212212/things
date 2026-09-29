@@ -4,6 +4,7 @@
  * (assembly sequential impulses), integration (assembly), events, queries.
  */
 #include "a3_physics.h"
+#include "a3_vehicle.h"
 #include "a3_physics_internal.h"
 #include "a3_character.h"
 #include "a3_physics_kernels.h"
@@ -215,6 +216,7 @@ void a3_physics_register(void) {
     A3_REFLECT_FIELD(t, A3CCharacterController, use_input, A3_FIELD_BOOL, "Player Controlled", "Read the keyboard/mouse. Turn off to drive it from scripts or AI.");
     A3_REFLECT_FIELD(t, A3CCharacterController, sounds, A3_FIELD_BOOL, "Footstep Sounds", "Plays built-in footstep, jump and landing sounds.");
     A3_REFLECT_FIELD(t, A3CCharacterController, grounded, A3_FIELD_BOOL, "On Ground", "Runtime state.")->flags |= A3_FIELD_FLAG_READONLY | A3_FIELD_FLAG_TRANSIENT;
+    a3_vehicle_register();
 }
 
 /* ======================================================================== */

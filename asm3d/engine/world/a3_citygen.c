@@ -11,6 +11,7 @@
 #include "../core/a3_format.h"
 #include "../core/a3_json.h"
 #include "../core/a3_log.h"
+#include "../platform/a3_platform.h"
 
 #define LAND_TOP 0.4f
 #define ROAD_TOP 0.5f
@@ -115,7 +116,7 @@ static void street_light(Gen *g, A3Vec3 base, f32 yaw) {
     A3CLight *l = (A3CLight *)a3_component_add(g->w, lamp, A3_T_LIGHT);
     l->type = A3_LIGHT_POINT;
     l->color = a3_v4(1.0f, 0.72f, 0.45f, 1);
-    l->intensity = 26.0f;    /* radiance falls off as 1/(d^2+1): ~0.5 on the road below */
+    l->intensity = 14.0f;    /* radiance falls off as 1/(d^2+1) */
     l->range = 22.0f;
     g->st->lights++;
 }
@@ -570,6 +571,9 @@ b32 a3_city_generate(A3World *w, const A3CityDesc *desc, A3CityStats *stats, A3S
         a3_jw_begin_object(&jw);
         a3_jw_kv_string(&jw, "format", "asm3d.roads");
         a3_jw_kv_int(&jw, "version", 1);
+        a3_jw_kv_number(&jw, "road_y", ROAD_TOP);
+        a3_jw_kv_number(&jw, "walk_y", WALK_TOP);
+        a3_jw_kv_number(&jw, "road_half_width", 6.0);
         a3_jw_key(&jw, "nodes");
         a3_jw_begin_array(&jw);
         for (u32 i = 0; i < g.nodes.count; ++i) { f32 p[2] = { g.nodes.data[i].x, g.nodes.data[i].y }; a3_jw_floats(&jw, p, 2); }
@@ -590,4 +594,86 @@ b32 a3_city_generate(A3World *w, const A3CityDesc *desc, A3CityStats *stats, A3S
     a3_array_free(g.edges);
     a3_hashmap_free(&g.node_map);
     return 1;
+}
+
+/* ======================================================================== */
+/* City component                                                           */
+/* ======================================================================== */
+
+u32 A3_T_CITY = 0xFFFFFFFFu;
+static const char *const g_time_names[] = { "Day", "Sunset", "Night" };
+
+typedef struct RoadsCache { A3World *world; A3StrBuf json; } RoadsCache;
+static RoadsCache g_roads[4];
+
+static void roads_release(A3World *w) {
+    for (u32 i = 0; i < A3_ARRAY_COUNT(g_roads); ++i)
+        if (g_roads[i].world == w) { a3_strbuf_free(&g_roads[i].json); a3_zero_struct(&g_roads[i]); }
+}
+
+const char *a3_city_generated_roads(A3World *w, usize *len) {
+    for (u32 i = 0; i < A3_ARRAY_COUNT(g_roads); ++i)
+        if (g_roads[i].world == w && g_roads[i].json.len) { if (len) *len = g_roads[i].json.len; return g_roads[i].json.data; }
+    return 0;
+}
+
+static b32 eq_nocase(const char *a, const char *b) {
+    while (*a && *b && a3_to_lower((u8)*a) == a3_to_lower((u8)*b)) { ++a; ++b; }
+    return *a == 0 && *b == 0;
+}
+
+A3CityTime a3_city_time_from_name(const char *name) {
+    if (!name) return A3_CITY_NIGHT;
+    if (eq_nocase(name, "day")) return A3_CITY_DAY;
+    if (eq_nocase(name, "sunset")) return A3_CITY_SUNSET;
+    return A3_CITY_NIGHT;
+}
+
+void a3_city_register(void) {
+    a3_world_on_destroy(roads_release);
+    if (A3_T_CITY != 0xFFFFFFFFu) return;
+    A3CCity c;
+    a3_zero_struct(&c);
+    c.seed = 1; c.density = 1.0f; c.time = A3_CITY_NIGHT; c.street_lights = 1; c.neon = 1;
+    u32 t = a3_component_register("City", "World", sizeof(A3CCity), 16, &c, A3_COMP_BUILTIN,
+        "Generates Sol Harbor, a coastal city with towers, an Art Deco beachfront, causeways and a port, when the game starts.");
+    A3_T_CITY = t;
+    a3_component_type(t)->icon = "city";
+    A3_REFLECT_FIELD(t, A3CCity, seed, A3_FIELD_U32, "Seed", "Same seed = same city.");
+    a3_field_range(A3_REFLECT_FIELD(t, A3CCity, density, A3_FIELD_F32, "Density", "Fraction of lots with buildings."), 0.1f, 1, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
+    A3FieldDesc *f = A3_REFLECT_FIELD(t, A3CCity, time, A3_FIELD_ENUM, "Time of Day", "Sky, sun, fog and post-processing look.");
+    f->enum_names = g_time_names; f->enum_count = 3;
+    A3_REFLECT_FIELD(t, A3CCity, street_lights, A3_FIELD_BOOL, "Street Lights", "Lamp posts with real point lights.");
+    A3_REFLECT_FIELD(t, A3CCity, neon, A3_FIELD_BOOL, "Neon", "Neon signs and trim on the beachfront.");
+    A3_REFLECT_FIELD(t, A3CCity, generated, A3_FIELD_BOOL, "Generated", "Runtime.")->flags |= A3_FIELD_FLAG_TRANSIENT | A3_FIELD_FLAG_READONLY;
+}
+
+void a3_city_update(A3World *w) {
+    if (A3_T_CITY == 0xFFFFFFFFu) return;
+    u32 n = 0;
+    const A3Entity *ents = 0;
+    a3_component_array(w, A3_T_CITY, &n, &ents);
+    for (u32 i = 0; i < n; ++i) {
+        A3CCity *c = (A3CCity *)a3_component_get(w, ents[i], A3_T_CITY);
+        if (!c || c->generated || !a3_entity_active(w, ents[i])) continue;
+        c->generated = 1;
+        A3CityDesc d;
+        a3_city_desc_default(&d);
+        d.seed = c->seed;
+        d.density = c->density;
+        d.time = c->time;
+        d.street_lights = c->street_lights;
+        d.neon = c->neon;
+        RoadsCache *rc = 0;
+        for (u32 k = 0; k < A3_ARRAY_COUNT(g_roads) && !rc; ++k) if (g_roads[k].world == w) rc = &g_roads[k];
+        for (u32 k = 0; k < A3_ARRAY_COUNT(g_roads) && !rc; ++k) if (!g_roads[k].world) rc = &g_roads[k];
+        if (!rc) { roads_release(g_roads[0].world); rc = &g_roads[0]; }
+        if (rc->world != w) { a3_zero_struct(rc); rc->world = w; a3_strbuf_init(&rc->json, A3_MEM_WORLD); }
+        a3_strbuf_clear(&rc->json);
+        u64 t0 = a3_time_ns();
+        A3CityStats st;
+        a3_city_generate(w, &d, &st, &rc->json);
+        A3_INFO("city", "generated Sol Harbor (seed %u): %u objects, %u buildings, %u lights in %.0f ms",
+                c->seed, st.entities, st.buildings, st.lights, (f64)(a3_time_ns() - t0) * 1e-6);
+    }
 }

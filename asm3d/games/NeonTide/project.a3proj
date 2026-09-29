@@ -1,0 +1,16 @@
+{
+  "format": "asm3d.project",
+  "version": 1,
+  "name": "Neon Tide",
+  "engine": "0.1.0",
+  "startupScene": "Assets/Scenes/Main.a3scene",
+  "window": {
+    "title": "Neon Tide",
+    "width": 1280,
+    "height": 720,
+    "vsync": true
+  },
+  "buildTargets": [
+    "Desktop"
+  ]
+}

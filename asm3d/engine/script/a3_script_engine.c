@@ -2,6 +2,9 @@
  * ASM3D - a3_script_engine.c
  * Script component, object/component bindings and the game API for A3Script.
  */
+#include "../physics/a3_vehicle.h"
+#include "../world/a3_traffic.h"
+#include "../world/a3_citygen.h"
 #include "a3_script_engine.h"
 #include "a3_script_internal.h"
 #include "../scene/a3_components.h"
@@ -810,6 +813,52 @@ NATIVE(n_overlap_sphere) {
     return 1;
 }
 
+/* ---- vehicles and the city ---- */
+
+NATIVE(n_spawn_car) {
+    WORLD_OR_FAIL();
+    const char *name = "Car";
+    A3Vec3 p = a3_v3_zero(), col = a3_v3(0.8f, 0.1f, 0.1f);
+    f64 yaw = 0;
+    if (n > 0 && !a3s_arg_str(vm, a, 0, &name)) return 0;
+    if (n > 1 && !a3s_arg_vec3(vm, a, 1, &p)) return 0;
+    if (n > 2 && !a3s_arg_num(vm, a, 2, &yaw)) return 0;
+    if (n > 3 && !a3s_arg_vec3(vm, a, 3, &col)) return 0;
+    *r = entity_value(w, a3_vehicle_spawn_car(w, name, p, (f32)yaw, a3_v4(col.x, col.y, col.z, 1)));
+    return 1;
+}
+
+NATIVE(n_road_point) {
+    WORLD_OR_FAIL();
+    A3Vec3 c = a3_v3_zero(), out, dir;
+    f64 lo = 0, hi = 1e9;
+    if (n > 0 && !a3s_arg_vec3(vm, a, 0, &c)) return 0;
+    if (n > 1 && !a3s_arg_num(vm, a, 1, &lo)) return 0;
+    if (n > 2 && !a3s_arg_num(vm, a, 2, &hi)) return 0;
+    *r = a3_traffic_random_road_point(w, c, (f32)lo, (f32)hi, &out, &dir) ? a3s_vec3(out.x, out.y, out.z) : a3s_nil();
+    return 1;
+}
+
+NATIVE(n_nearest_road) {
+    (void)n; WORLD_OR_FAIL();
+    A3Vec3 p, out, dir;
+    if (!a3s_arg_vec3(vm, a, 0, &p)) return 0;
+    if (!a3_traffic_nearest_road_point(w, p, &out, &dir)) { *r = a3s_nil(); return 1; }
+    *r = a3s_list(2);
+    A3SValue items[2] = { a3s_vec3(out.x, out.y, out.z), a3s_vec3(dir.x, dir.y, dir.z) };
+    for (u32 i = 0; i < 2; ++i) a3s_list_push(r, &items[i]);
+    return 1;
+}
+
+NATIVE(n_city_time) {
+    (void)n; WORLD_OR_FAIL();
+    const char *name;
+    if (!a3s_arg_str(vm, a, 0, &name)) return 0;
+    a3_city_apply_time(w, a3_city_time_from_name(name));
+    *r = a3s_nil();
+    return 1;
+}
+
 /* ---- sound, particles, animation ---- */
 
 NATIVE(n_play_sound) {
@@ -1084,6 +1133,10 @@ static void register_natives(void) {
         { "raycast", n_raycast, 2, 3, "Physics", "raycast(origin, direction, max_distance)", "The first object hit by a ray, or nil (ignores the object running the script)." },
         { "raycast_hit", n_raycast_hit, 2, 3, "Physics", "raycast_hit(origin, direction, max_distance)", "[object, point, normal, distance] of the first hit, or nil." },
         { "overlap_sphere", n_overlap_sphere, 2, 2, "Physics", "overlap_sphere(center, radius)", "A list of objects with colliders inside a sphere." },
+        { "spawn_car", n_spawn_car, 0, 4, "City", "spawn_car(name, position, yaw, color)", "Creates a drivable car (Vehicle) facing yaw degrees; set car.Vehicle.use_input = true to drive it." },
+        { "road_point", n_road_point, 0, 3, "City", "road_point(center, min_distance, max_distance)", "A random point on a road of the city, between the distances from center (nil without roads)." },
+        { "nearest_road", n_nearest_road, 1, 1, "City", "nearest_road(position)", "[point, direction] of the closest road center line, or nil." },
+        { "city_time", n_city_time, 1, 1, "City", "city_time(\"night\")", "Changes the sky, sun and look to \"day\", \"sunset\" or \"night\"." },
         { "play_sound", n_play_sound, 1, 3, "Game", "play_sound(sound, volume, pitch)", "Plays a .wav file or a built-in sound such as \"coin\" or \"jump\"." },
         { "burst", n_burst, 1, 1, "Game", "burst(obj)", "Restarts the ParticleEmitter of an object (great with the Explosion preset)." },
         { "play_animation", n_play_animation, 1, 1, "Game", "play_animation(obj)", "Plays the Animator of an object from the start." },

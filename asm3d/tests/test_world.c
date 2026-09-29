@@ -4,6 +4,8 @@
 #include "a3_test.h"
 #include "../engine/world/a3_citygen.h"
 #include "../engine/world/a3_procmeshes.h"
+#include "../engine/world/a3_traffic.h"
+#include "../engine/physics/a3_vehicle.h"
 #include "../engine/scene/a3_components.h"
 #include "../engine/physics/a3_physics.h"
 #include "../engine/resource/a3_assets.h"
@@ -97,5 +99,100 @@ A3_TEST(world_city_generation) {
     }
     a3_strbuf_free(&roads);
     a3_world_destroy(w2);
+    a3_world_destroy(w);
+}
+
+static A3Entity ground_box(A3World *w, const char *name, A3Vec3 pos, A3Vec3 size) {
+    A3Entity e = a3_entity_create(w, name);
+    ((A3CTransform *)a3_component_add(w, e, A3_T_TRANSFORM))->position = pos;
+    A3CCollider *c = (A3CCollider *)a3_component_add(w, e, A3_T_COLLIDER);
+    c->shape = A3_SHAPE_BOX;
+    c->size = size;
+    return e;
+}
+
+static void step_world(A3World *w, u32 steps) {
+    for (u32 i = 0; i < steps; ++i) {
+        a3_city_update(w);
+        a3_traffic_update(w, 1.0f / 60.0f);
+        a3_vehicle_update_all(w, 1.0f / 60.0f);
+        a3_transform_system_update(w);
+    }
+}
+
+A3_TEST(world_vehicle_drive_steer_crash) {
+    setup();
+    A3World *w = a3_world_create("drive");
+    ground_box(w, "Ground", a3_v3(0, -0.5f, 0), a3_v3(3000, 1, 3000));
+    A3Entity car = a3_vehicle_spawn_car(w, "Car", a3_v3(0, 0, 0), 0, a3_v4(1, 0, 0, 1));
+    A3CVehicle *v = (A3CVehicle *)a3_component_get(w, car, A3_T_VEHICLE);
+    A3_CHECK(v != 0 && a3_entity_valid(w, a3_entity_find_by_name(w, "Wheel FL")));
+    if (!v) { a3_world_destroy(w); return; }
+    /* full throttle: accelerates forward (-Z) and stays on the ground */
+    v->throttle = 1;
+    step_world(w, 180);
+    A3CTransform *t = a3_transform(w, car);
+    A3_CHECK(v->speed > 15.0f && v->speed <= v->max_speed + 0.01f);
+    A3_CHECK(t->position.z < -30.0f && a3_absf(t->position.x) < 0.5f);
+    A3_CHECK(v->grounded && a3_absf(t->position.y) < 0.05f);
+    /* steering right turns clockwise seen from above: heading swings toward +X */
+    v->steer = 1;
+    step_world(w, 60);
+    A3Vec3 fwd = a3_quat_rotate(t->rotation, a3_v3(0, 0, -1));
+    A3_CHECK(fwd.x > 0.3f);
+    /* brake to a stop */
+    v->steer = 0;
+    v->throttle = -1;
+    for (u32 i = 0; i < 600 && v->speed > 0.1f; ++i) step_world(w, 1);
+    A3_CHECK(a3_absf(v->speed) < 0.6f);
+    /* a wall ahead stops the car and reports the impact */
+    A3Vec3 p = t->position;
+    fwd = a3_quat_rotate(t->rotation, a3_v3(0, 0, -1));
+    A3Entity wall = ground_box(w, "Wall", a3_v3_add(p, a3_v3_scale(fwd, 25.0f)), a3_v3(30, 6, 30));
+    A3_UNUSED(wall);
+    v->throttle = 1;
+    f32 max_impact = 0;
+    for (u32 i = 0; i < 240; ++i) { step_world(w, 1); max_impact = a3_maxf(max_impact, v->last_impact); }
+    A3_CHECK(max_impact > 3.0f && v->damage > 0);
+    f32 dist_to_wall_center = a3_v3_len(a3_v3_sub(t->position, a3_v3_add(p, a3_v3_scale(fwd, 25.0f))));
+    A3_CHECK(dist_to_wall_center > 15.0f);   /* did not drive through the wall */
+    a3_world_destroy(w);
+}
+
+A3_TEST(world_traffic_follows_roads) {
+    setup();
+    a3_traffic_register();
+    A3World *w = a3_world_create("traffic");
+    A3Entity ce = a3_entity_create(w, "City");
+    a3_component_add(w, ce, A3_T_TRANSFORM);
+    A3CCity *city = (A3CCity *)a3_component_add(w, ce, A3_T_CITY);
+    city->density = 0.2f;
+    city->street_lights = 0;
+    A3Entity te = a3_entity_create(w, "Traffic");
+    a3_component_add(w, te, A3_T_TRANSFORM);
+    A3CTraffic *tr = (A3CTraffic *)a3_component_add(w, te, A3_T_TRAFFIC);
+    a3_strcpy(tr->roads, sizeof(tr->roads), "generated");
+    tr->cars = 12;
+    tr->pedestrians = 10;
+    step_world(w, 2);
+    A3_CHECK(tr->spawned && tr->active_cars == 12 && tr->active_pedestrians == 10);
+    A3_CHECK(a3_traffic_graph(w) != 0);
+    A3Entity car = a3_entity_find_by_name(w, "Traffic Car 1");
+    A3_CHECK(a3_entity_valid(w, car));
+    A3Vec3 start = a3_transform(w, car)->position;
+    f32 worst = 0, travelled = 0;
+    A3Vec3 prev = start;
+    for (u32 s = 0; s < 20; ++s) {
+        step_world(w, 30);
+        A3Vec3 p = a3_transform(w, car)->position, q;
+        travelled += a3_v3_len(a3_v3_sub(p, prev));
+        prev = p;
+        if (a3_traffic_nearest_road_point(w, p, &q, 0)) worst = a3_maxf(worst, a3_sqrtf((p.x - q.x) * (p.x - q.x) + (p.z - q.z) * (p.z - q.z)));
+    }
+    A3_CHECK_MSG(travelled > 40.0f, "traffic car only moved %.1f m in 10 s", travelled);
+    A3_CHECK_MSG(worst < 9.0f, "traffic car left the road (%.1f m from a center line)", worst);
+    A3Vec3 rp;
+    A3_CHECK(a3_traffic_random_road_point(w, a3_v3_zero(), 100, 300, &rp, 0));
+    A3_CHECK(a3_sqrtf(rp.x * rp.x + rp.z * rp.z) >= 99.0f && a3_sqrtf(rp.x * rp.x + rp.z * rp.z) <= 301.0f);
     a3_world_destroy(w);
 }

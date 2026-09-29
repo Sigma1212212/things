@@ -1,0 +1,444 @@
+// NEON TIDE - game rules for Sol Harbor.
+//
+// On foot: WASD walk, Shift run, mouse look (click to capture), E enter a car.
+// Driving: W/S throttle and brake, A/D steer, Space handbrake, E get out.
+// Courier jobs: drive to the glowing beam before the timer runs out.
+// Crashing into things draws police attention (wanted stars); lose them by
+// getting far away, or get busted if they box you in.
+
+let player = nil
+let cam = nil
+let checkpoint = nil
+let car = nil                 // the car the player drives (nil on foot)
+let hero = nil                // the player's own car
+
+let cash = 0
+let best_streak = 0
+let streak = 0
+let jobs_done = 0
+
+// mission
+let target = nil
+let job_time = 0
+let job_limit = 0
+let job_reward = 0
+let message = ""
+let message_time = 0
+let job_cooldown = 0
+
+// wanted level
+let heat = 0                  // 0..5 stars (fractional)
+let cops = []
+let cop_stuck = []
+let cop_reverse = []
+let cop_bars = []
+let near_car = nil
+let near_timer = 0
+let evade = 0
+let busted_time = 0
+let last_damage = 0
+let siren_phase = 0
+
+let traffic = []
+let t_start = 0
+
+fn on_start() {
+    player = find("Player")
+    cam = find("Main Camera")
+    checkpoint = find("Checkpoint")
+    cash = load_value("cash", 0)
+    best_streak = load_value("best_streak", 0)
+    // the player's car: parked on the beachfront drive next to the start
+    hero = spawn_car("Hero Car", vec3(403, 0.5, 52), 0, vec3(1.0, 0.18, 0.55))
+    traffic = find_all("Traffic Car")
+    t_start = time()
+    if checkpoint != nil { checkpoint.active = false }
+    job_cooldown = 4
+}
+
+fn say(text, seconds) {
+    message = text
+    message_time = seconds
+}
+
+// ---------------------------------------------------------------- cars
+
+fn nearest_car(pos, radius) {
+    let best = nil
+    let bd = radius
+    let list = find_with("Vehicle")
+    for c in list {
+        let d = distance(c.position, pos)
+        if d < bd and not contains(cops, c) {
+            bd = d
+            best = c
+        }
+    }
+    return best
+}
+
+fn enter_car(c) {
+    car = c
+    if has_component(c, "TrafficAgent") { remove_component(c, "TrafficAgent") }
+    c.Vehicle.use_input = true
+    c.Vehicle.ground_probe = true
+    c.Vehicle.collide_world = true
+    c.Vehicle.max_speed = 58
+    c.Vehicle.acceleration = 15
+    c.Vehicle.grip = 0.8
+    c.Vehicle.handbrake = false
+    last_damage = c.Vehicle.damage
+    cam.parent = nil
+    player.active = false
+    play_sound("powerup", 0.4, 0.7)
+}
+
+fn exit_car() {
+    let c = car
+    c.Vehicle.use_input = false
+    c.Vehicle.throttle = 0
+    c.Vehicle.steer = 0
+    c.Vehicle.handbrake = true
+    car = nil
+    // step out on the driver's side
+    player.position = c.position - c.right * 2.3 + vec3(0, 0.3, 0)
+    player.active = true
+    cam.parent = player
+    cam.local_position = vec3(0, 1.8, 4.5)
+}
+
+// ---------------------------------------------------------------- jobs
+
+fn new_job() {
+    let from = player_pos()
+    let p = road_point(from, 380, 750)
+    if p == nil { return }
+    target = p
+    checkpoint.position = p + vec3(0, 30, 0)
+    checkpoint.active = true
+    let d = distance(from, p)
+    job_limit = round(d / 17 + 20)
+    job_time = job_limit
+    job_reward = round(d * 1.5 / 10) * 10 + 200
+    say("Courier job: get to the beam  ($" + job_reward + ")", 4)
+    play_sound("beep", 0.5, 1.2)
+}
+
+fn finish_job() {
+    let bonus = round(job_time) * 10
+    cash += job_reward + bonus
+    streak += 1
+    jobs_done += 1
+    if streak > best_streak {
+        best_streak = streak
+        save_value("best_streak", best_streak)
+    }
+    save_value("cash", cash)
+    say("Delivered!  +$" + (job_reward + bonus) + "   streak " + streak, 3.5)
+    play_sound("coin", 0.8, 1.0)
+    target = nil
+    checkpoint.active = false
+    job_cooldown = 3
+}
+
+fn fail_job() {
+    streak = 0
+    say("Too slow. The client found another courier.", 3.5)
+    play_sound("hurt", 0.5, 0.8)
+    target = nil
+    checkpoint.active = false
+    job_cooldown = 4
+}
+
+fn player_pos() {
+    if car != nil { return car.position }
+    return player.position
+}
+
+// ---------------------------------------------------------------- police
+
+fn add_heat(amount) {
+    let before = floor(heat)
+    heat = clamp(heat + amount, 0, 5)
+    evade = 0
+    if floor(heat) > before and floor(heat) >= 1 { say("Wanted level " + floor(heat) + "!", 2.5) }
+}
+
+fn spawn_cop() {
+    let p = road_point(player_pos(), 140, 260)
+    if p == nil { return }
+    let c = spawn_car("Police Car", p, random(0, 360), vec3(0.06, 0.07, 0.1))
+    c.Vehicle.max_speed = 50 + floor(heat) * 3
+    c.Vehicle.acceleration = 13
+    c.Vehicle.grip = 0.9
+    // light bar
+    let bar = clone(find("Lightbar Template"), p)
+    bar.parent = c
+    bar.local_position = vec3(0, 1.52, 0.3)
+    bar.active = true
+    push(cop_bars, bar)
+    push(cops, c)
+    push(cop_stuck, 0)
+    push(cop_reverse, 0)
+}
+
+fn clear_cops() {
+    for c in cops { destroy(c) }
+    cops = []
+    cop_stuck = []
+    cop_reverse = []
+    cop_bars = []
+}
+
+fn drive_cop(i, dt) {
+    let c = cops[i]
+    let v = c.Vehicle
+    let goal = player_pos()
+    let to = goal - c.position
+    let d = length(to)
+    // steer toward the player (angle between heading and target, clockwise positive)
+    let f = c.forward
+    let side = dot(normalize(to), c.right)
+    let ahead = dot(normalize(to), f)
+    let steer = clamp(side * 2.5, -1, 1)
+    if ahead < 0 { steer = sign(side + 0.001) }
+    if cop_reverse[i] > 0 {
+        cop_reverse[i] -= dt
+        v.throttle = -1
+        v.steer = -steer
+        return
+    }
+    v.steer = steer
+    v.throttle = 1
+    if d < 14 and ahead > 0.5 { v.throttle = 0.3 }
+    if abs(v.speed) < 1.5 and d > 12 {
+        cop_stuck[i] += dt
+        if cop_stuck[i] > 1.5 {
+            cop_reverse[i] = 1.2
+            cop_stuck[i] = 0
+        }
+    } else { cop_stuck[i] = 0 }
+}
+
+fn update_police(dt) {
+    let stars = floor(heat)
+    // enough cars for the wanted level
+    if stars >= 1 and len(cops) < min(stars + 1, 5) { spawn_cop() }
+    let nearest = 1e9
+    for i in 0..len(cops) {
+        drive_cop(i, dt)
+        nearest = min(nearest, distance(cops[i].position, player_pos()))
+    }
+    // flashing light bars
+    siren_phase += dt * 6
+    let on = floor(siren_phase) % 2 == 0
+    for bar in cop_bars {
+        if exists(bar) { bar.MeshRenderer.base_color = on and vec3(1, 0.05, 0.05) or vec3(0.05, 0.2, 1) }
+    }
+    if stars >= 1 {
+        let speed = 0
+        if car != nil { speed = abs(car.Vehicle.speed) }
+        if nearest < 11 and speed < 2.5 {
+            busted_time += dt
+            if busted_time > 2.5 { busted() }
+        } else { busted_time = max(busted_time - dt, 0) }
+        if nearest > 120 {
+            evade += dt
+            if evade > 9 {
+                heat = max(heat - 1, 0)
+                evade = 0
+                if floor(heat) == 0 {
+                    clear_cops()
+                    say("You lost them.", 3)
+                    play_sound("powerup", 0.5, 1.3)
+                } else { say("Wanted level " + floor(heat), 2) }
+            }
+        } else { evade = 0 }
+    } else if len(cops) > 0 { clear_cops() }
+}
+
+fn busted() {
+    busted_time = 0
+    heat = 0
+    clear_cops()
+    let fine = min(cash, 250 + jobs_done * 50)
+    cash -= fine
+    save_value("cash", cash)
+    streak = 0
+    say("BUSTED!  Fine: $" + fine, 4)
+    play_sound("hurt", 0.9, 0.6)
+    if target != nil { fail_job() }
+}
+
+// ---------------------------------------------------------------- frame
+
+fn rescue(obj) {
+    // back onto the nearest road, facing along it
+    let r = nearest_road(obj.position)
+    if r == nil { return }
+    obj.position = r[0] + vec3(0, 0.3, 0)
+    obj.rotation = vec3(0, degrees(atan2(-r[1].x, -r[1].z)), 0)
+}
+
+fn on_fixed_update(dt) {
+    if car != nil and exists(car) and car.position.y < -0.7 {
+        say("Splash! Towed back to the road (-$100)", 3)
+        cash = max(cash - 100, 0)
+        play_sound("explosion", 0.4, 0.6)
+        rescue(car)
+    }
+    if car == nil and player != nil and player.position.y < -0.9 { rescue(player) }
+    if car != nil and exists(car) {
+        let dmg = car.Vehicle.damage
+        if dmg > last_damage + 0.01 {
+            let hit = dmg - last_damage
+            last_damage = dmg
+            if hit > 6 { add_heat(clamp(hit / 22, 0.15, 1)) }
+            play_sound("hit", clamp(hit / 25, 0.2, 1), 0.7 + random() * 0.2)
+        }
+    }
+    update_police(dt)
+}
+
+fn on_update(dt) {
+    // cars within reach (checked a few times per second: there are many objects)
+    near_timer -= dt
+    if car == nil and near_timer <= 0 {
+        near_car = nearest_car(player.position, 5)
+        near_timer = 0.25
+    }
+    // enter / exit
+    if key_pressed("e") or key_pressed("f") {
+        if car == nil {
+            let c = nearest_car(player.position, 5)
+            if c != nil { enter_car(c) }
+        } else if abs(car.Vehicle.speed) < 6 {
+            exit_car()
+        }
+    }
+    if car != nil and not exists(car) {
+        car = nil
+        player.active = true
+        cam.parent = player
+    }
+    if len(traffic) == 0 and time() - t_start > 0.5 { traffic = find_all("Traffic Car") }
+    // jobs
+    if target == nil {
+        job_cooldown -= dt
+        if job_cooldown <= 0 and player != nil { new_job() }
+    } else {
+        job_time -= dt
+        if distance(player_pos(), target) < 10 { finish_job() }
+        else if job_time <= 0 { fail_job() }
+    }
+    if checkpoint != nil and checkpoint.active {
+        checkpoint.rotation = vec3(0, time() * 40, 0)
+    }
+    message_time -= dt
+    draw_hud()
+}
+
+// ---------------------------------------------------------------- HUD
+
+fn money(x) {
+    let s = str(round(x))
+    let out = ""
+    let n = len(s)
+    for i in 0..n {
+        out += substr(s, i, 1)
+        let left = n - 1 - i
+        if left > 0 and left % 3 == 0 { out += "," }
+    }
+    return "$" + out
+}
+
+fn draw_hud() {
+    // cash and wanted stars (top right)
+    hud_text(money(cash), 1250, 22, 1.7, vec3(0.45, 1.0, 0.55), 1, "right")
+    for i in 0..5 {
+        let x = 1232 - i * 30
+        let lit = i < floor(heat)
+        let flash = lit and evade > 0 and floor(time() * 4) % 2 == 0
+        let col = lit and vec3(1, 0.85, 0.2) or vec3(0.25, 0.25, 0.3)
+        if flash { col = vec3(0.4, 0.35, 0.15) }
+        hud_rect(x - 10, 70, 20, 20, col, lit and 1 or 0.6)
+    }
+    // mission
+    if target != nil {
+        let d = distance(player_pos(), target)
+        let secs = max(job_time, 0)
+        let col = secs < 10 and vec3(1, 0.35, 0.3) or vec3(1, 1, 1)
+        hud_rect(440, 18, 400, 52, vec3(0.05, 0.03, 0.1), 0.55)
+        hud_text("DELIVERY  " + format_number(floor(secs / 60), 0) + ":" + substr(str(100 + floor(secs % 60)), 1, 2), 640, 24, 1.3, col, 1, "center")
+        hud_text(format_number(d, 0) + " m", 640, 48, 0.9, vec3(0.7, 0.95, 1), 0.9, "center")
+    }
+    // message
+    if message_time > 0 {
+        let a = clamp(message_time, 0, 1)
+        hud_text(message, 640, 118, 1.5, vec3(1, 0.9, 0.95), a, "center")
+    }
+    // speedometer
+    if car != nil {
+        let kmh = abs(car.Vehicle.speed) * 3.6
+        hud_text(format_number(kmh, 0), 1230, 610, 3.2, vec3(1, 0.4, 0.75), 1, "right")
+        hud_text("km/h", 1240, 668, 1.0, vec3(0.9, 0.9, 1), 0.8, "right")
+    } else if near_car != nil {
+        hud_text("Press E to drive", 640, 600, 1.2, vec3(1, 1, 1), 0.9, "center")
+    }
+    draw_radar()
+    // controls help for the first seconds
+    let since = time() - t_start
+    if since < 12 {
+        let a = clamp(12 - since, 0, 1)
+        hud_text("NEON TIDE", 40, 22, 2.2, vec3(1, 0.3, 0.7), a)
+        hud_text("WASD move   Shift run   E car   Space handbrake   click: mouse look", 40, 72, 0.9, vec3(0.8, 0.95, 1), a * 0.9)
+    }
+    if streak > 1 { hud_text("Streak " + streak, 1250, 100, 1.0, vec3(1, 0.85, 0.3), 0.9, "right") }
+}
+
+fn radar_point(p, center, heading) {
+    // world -> radar (north up is the direction the player faces)
+    let rel = p - center
+    let c = cos(heading)
+    let s = sin(heading)
+    let x = rel.x * c + rel.z * s
+    let y = rel.z * c - rel.x * s
+    return vec3(x, y, 0)
+}
+
+fn draw_radar() {
+    let cx = 130
+    let cy = 590
+    let r = 100
+    let scale = 0.35               // pixels per meter
+    hud_rect(cx - r, cy - r, r * 2, r * 2, vec3(0.03, 0.02, 0.08), 0.6)
+    hud_rect(cx - r, cy - r, r * 2, 2, vec3(1, 0.3, 0.7), 0.8)
+    let center = player_pos()
+    let src = car != nil and car or player
+    let fwd = src.forward
+    let heading = atan2(fwd.x, -fwd.z)
+    // traffic
+    for t in traffic {
+        if exists(t) {
+            let q = radar_point(t.position, center, heading) * scale
+            if abs(q.x) < r - 3 and abs(q.y) < r - 3 { hud_rect(cx + q.x - 2, cy + q.y - 2, 4, 4, vec3(0.7, 0.7, 0.75), 0.7) }
+        }
+    }
+    // police
+    for c in cops {
+        let q = radar_point(c.position, center, heading) * scale
+        q = vec3(clamp(q.x, -r + 4, r - 4), clamp(q.y, -r + 4, r - 4), 0)
+        let blink = floor(time() * 6) % 2 == 0
+        hud_rect(cx + q.x - 4, cy + q.y - 4, 8, 8, blink and vec3(1, 0.1, 0.1) or vec3(0.1, 0.3, 1), 1)
+    }
+    // job target (clamped to the edge)
+    if target != nil {
+        let q = radar_point(target, center, heading) * scale
+        let m = max(abs(q.x), abs(q.y))
+        if m > r - 6 { q = q * ((r - 6) / m) }
+        hud_rect(cx + q.x - 5, cy + q.y - 5, 10, 10, vec3(0.2, 1, 1), 1)
+    }
+    // player arrow
+    hud_rect(cx - 3, cy - 7, 6, 14, vec3(1, 1, 1), 1)
+    hud_rect(cx - 6, cy - 7, 12, 4, vec3(1, 1, 1), 1)
+}
