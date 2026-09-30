@@ -111,6 +111,8 @@ typedef struct A3CVehicle {
     f32 drag_area;          /* derived: Cd * A */
     f32 final_drive;        /* derived */
     f32 slip_w[4];
+    A3Vec3 skid_last[4];    /* last skid mark point per wheel */
+    b32 skid_on[4];
     f32 _pad[2];
 } A3CVehicle;
 

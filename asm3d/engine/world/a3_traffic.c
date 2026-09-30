@@ -312,11 +312,11 @@ static void spawn_all(A3World *w, A3CTraffic *tr, GraphCache *gc, A3Entity manag
                 e = a3_vehicle_spawn_car_style(w, name, p, yaw, paint, style);
                 A3CVehicle *v = (A3CVehicle *)a3_component_get(w, e, A3_T_VEHICLE);
                 v->physics_model = A3_VEHICLE_ARCADE;    /* the traffic AI steers the simple model */
-                /* dozens of cars: no engine / tire sound loops for traffic */
+                /* dozens of cars: no engine / tire sound loops or smoke emitters for traffic */
                 for (A3Entity c = a3_entity_first_child(w, e); a3_entity_valid(w, c);) {
                     A3Entity next = a3_entity_next_sibling(w, c);
                     const char *cn = a3_entity_name(w, c);
-                    if (a3_streq(cn, "Engine Sound") || a3_streq(cn, "Tire Sound")) a3_entity_destroy(w, c);
+                    if (a3_streq(cn, "Engine Sound") || a3_streq(cn, "Tire Sound") || a3_str_starts_with(cn, "Tire Smoke")) a3_entity_destroy(w, c);
                     c = next;
                 }
                 v->ground_probe = 0;

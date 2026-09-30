@@ -145,7 +145,8 @@ static void vehicle_drive_steer_crash(i32 model) {
     v->physics_model = model;
     /* at rest the realistic car settles on its springs with the origin on the ground */
     step_world(w, 60);
-    A3CTransform *t = a3_transform(w, car);
+    /* re-fetched after stepping: skid marks and smoke add objects, which can move component arrays */
+#define t (a3_transform(w, car))
     A3_CHECK(a3_absf(t->position.y) < 0.03f && a3_absf(t->position.z) < 0.05f);
     if (real) A3_CHECK(v->comp[0] > 0.03f && v->comp[3] > 0.03f && v->gear == 1);
     /* full throttle: accelerates forward (-Z) and stays on the ground */
@@ -183,6 +184,7 @@ static void vehicle_drive_steer_crash(i32 model) {
     f32 dist_to_wall_center = a3_v3_len(a3_v3_sub(t->position, a3_v3_add(p, a3_v3_scale(fwd, 25.0f))));
     A3_CHECK(dist_to_wall_center > 15.0f);   /* did not drive through the wall */
     a3_world_destroy(w);
+#undef t
 }
 
 A3_TEST(world_vehicle_drive_steer_crash) { vehicle_drive_steer_crash(A3_VEHICLE_REALISTIC); }

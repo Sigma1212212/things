@@ -12,6 +12,7 @@
 #include "a3_vehicle_kernels.h"
 #include "../audio/a3_audio.h"
 #include "../world/a3_weather.h"
+#include "../particles/a3_particles.h"
 
 u32 A3_T_VEHICLE = 0xFFFFFFFFu;
 
@@ -595,6 +596,8 @@ static void sim_place_wheels(A3World *w, A3Entity e, const A3CVehicle *v) {
 
 /* Steps the realistic cars together: the wheel kernel runs once per
  * substep for all of them. */
+static void tire_effects(A3World *w, A3Entity car, A3CVehicle *v, const A3Vec3 *contact, const A3Vec3 *normal, const b32 *hit);
+
 static void sim_step_cars(A3World *w, const A3Entity *ents, u32 count, f32 dt) {
     if (!count || dt <= 0) return;
     dt = a3_minf(dt, 0.05f);
@@ -636,6 +639,8 @@ static void sim_step_cars(A3World *w, const A3Entity *ents, u32 count, f32 dt) {
     for (u32 i = 0; i < n; ++i) {
         SimCar *sc = &cars[i];
         A3CVehicle *v = sc->v;
+        sc->t = a3_transform(w, sc->e);          /* skid marks of earlier cars may have grown the transform array */
+        if (!sc->t) continue;
         A3Quat r = v->orientation;
         A3Vec3 pos = sc->pos;
         if (collide_body(w, sc->e, v, &pos, r, &v->velocity)) {
@@ -661,6 +666,7 @@ static void sim_step_cars(A3World *w, const A3Entity *ents, u32 count, f32 dt) {
         if (rb && rb->type == A3_BODY_KINEMATIC) rb->velocity = v->velocity;
         sim_place_wheels(w, sc->e, v);
         spin_wheels(w, sc->e, v);
+        tire_effects(w, sc->e, v, sc->contact, sc->normal, sc->hit);
     }
     a3_free(quads);
     a3_free(cars);
@@ -683,6 +689,67 @@ static void set_headlights(A3World *w, A3Entity car, f32 night) {
         if (!a3_streq(a3_entity_name(w, c), "Headlights")) continue;
         A3CLight *l = (A3CLight *)a3_component_get(w, c, A3_T_LIGHT);
         if (l) l->intensity = 22.0f * night;     /* daytime running lights do not light the road */
+    }
+}
+
+/* ---- tire smoke and skid marks ---- */
+
+#define SKID_MAX 320
+static A3World *g_skid_world;
+static A3Entity g_skid[SKID_MAX];
+static u32 g_skid_next;
+static A3Entity g_skid_root;
+
+/* one dark strip on the road from a to b (a recycled pool: the oldest marks disappear) */
+static void skid_segment(A3World *w, A3Vec3 a, A3Vec3 b, A3Vec3 n) {
+    if (g_skid_world != w) { g_skid_world = w; g_skid_next = 0; g_skid_root = A3_ENTITY_NULL; for (u32 i = 0; i < SKID_MAX; ++i) g_skid[i] = A3_ENTITY_NULL; }
+    if (!a3_entity_valid(w, g_skid_root)) {
+        g_skid_root = a3_entity_create(w, "Skid Marks");
+        a3_component_add(w, g_skid_root, A3_T_TRANSFORM);
+    }
+    A3Entity e = g_skid[g_skid_next];
+    if (!a3_entity_valid(w, e)) {
+        e = a3_entity_create(w, "Skid");
+        a3_component_add(w, e, A3_T_TRANSFORM);
+        A3CMeshRenderer *mr = (A3CMeshRenderer *)a3_component_add(w, e, A3_T_MESH_RENDERER);
+        if (mr) { mr->primitive = A3_PRIM_CUBE; mr->base_color = a3_v4(0.02f, 0.02f, 0.022f, 1); mr->roughness = 0.9f; mr->cast_shadows = 0; }
+        a3_entity_set_parent(w, e, g_skid_root);
+        g_skid[g_skid_next] = e;
+    }
+    g_skid_next = (g_skid_next + 1) % SKID_MAX;
+    A3CTransform *t = a3_transform(w, e);
+    if (!t) return;
+    A3Vec3 d = a3_v3_sub(b, a);
+    f32 len = a3_v3_len(d);
+    t->position = a3_v3_add(a3_v3_scale(a3_v3_add(a, b), 0.5f), a3_v3_scale(n, 0.012f));
+    t->rotation = a3_quat_look_rotation(len > 1e-3f ? a3_v3_scale(d, -1.0f / len) : a3_v3(0, 0, -1), n);
+    t->scale = a3_v3(0.2f, 0.004f, len + 0.02f);
+}
+
+static void tire_effects(A3World *w, A3Entity car, A3CVehicle *v, const A3Vec3 *contact, const A3Vec3 *normal, const b32 *hit) {
+    f32 speed = a3_v3_len(v->velocity);
+    for (u32 i = 0; i < 4; ++i) {
+        b32 marking = hit[i] && v->slip_w[i] > 0.55f && speed > 3.0f;
+        if (marking && v->skid_on[i]) {
+            if (a3_v3_len_sq(a3_v3_sub(contact[i], v->skid_last[i])) > 0.16f) {
+                skid_segment(w, v->skid_last[i], contact[i], normal[i]);
+                v->skid_last[i] = contact[i];
+            }
+        } else if (marking) {
+            v->skid_last[i] = contact[i];
+        }
+        v->skid_on[i] = marking;
+    }
+    if (A3_T_PARTICLE_EMITTER == 0xFFFFFFFFu) return;
+    for (A3Entity c = a3_entity_first_child(w, car); a3_entity_valid(w, c); c = a3_entity_next_sibling(w, c)) {
+        const char *name = a3_entity_name(w, c);
+        if (!a3_str_starts_with(name, "Tire Smoke")) continue;
+        A3CParticleEmitter *pe = (A3CParticleEmitter *)a3_component_get(w, c, A3_T_PARTICLE_EMITTER);
+        if (!pe) continue;
+        u32 wheel = a3_str_ends_with(name, "L") ? 2u : 3u;
+        f32 s = hit[wheel] ? a3_smoothstep(0.5f, 1.0f, v->slip_w[wheel]) * a3_clampf(speed / 6.0f, 0, 1) : 0.0f;
+        pe->emitting = s > 0.05f;
+        pe->rate = 90.0f * s;
     }
 }
 
@@ -844,6 +911,33 @@ A3Entity a3_vehicle_spawn_car_style(A3World *w, const char *name, A3Vec3 ground_
         f32 x = (i & 1) ? track : -track, z = i < 2 ? -wb * 0.5f : wb * 0.5f;
         A3Entity wh = part(w, car, names[i], a3_v3(x, wr, z), a3_v3s(wr), "builtin:wheel_detailed", A3_PRIM_NONE, "builtin:wheel", a3_v4(1, 1, 1, 1));
         if (x < 0) a3_transform(w, wh)->rotation = a3_quat_axis_angle(a3_v3(0, 1, 0), A3_PI);  /* rim face outward */
+    }
+    /* tire smoke at the rear wheels (emits while the tires slide) */
+    if (A3_T_PARTICLE_EMITTER != 0xFFFFFFFFu) {
+        for (int k = 0; k < 2; ++k) {
+            A3Entity se = a3_entity_create(w, k == 0 ? "Tire Smoke L" : "Tire Smoke R");
+            A3CTransform *st = (A3CTransform *)a3_component_add(w, se, A3_T_TRANSFORM);
+            st->position = a3_v3(k == 0 ? -track : track, 0.15f, wb * 0.5f + 0.2f);
+            a3_entity_set_parent(w, se, car);
+            A3CParticleEmitter *pe = (A3CParticleEmitter *)a3_component_add(w, se, A3_T_PARTICLE_EMITTER);
+            if (!pe) continue;
+            a3_particles_preset(pe, A3_PARTICLES_SMOKE);
+            pe->emitting = 0;
+            pe->loop = 1;
+            pe->world_space = 1;
+            pe->rate = 0;
+            pe->lifetime = 2.2f;
+            pe->speed = 1.2f;
+            pe->spread = 60;
+            pe->radius = 0.25f;
+            pe->size_start = 0.35f;
+            pe->size_end = 3.0f;
+            pe->gravity = a3_v3(0, 0.35f, 0);
+            pe->drag = 1.2f;
+            pe->color_start = a3_v4(0.78f, 0.78f, 0.8f, 0.45f);
+            pe->color_end = a3_v4(0.85f, 0.85f, 0.88f, 0.0f);
+            pe->max_particles = 260;
+        }
     }
     /* engine and tire sounds (3D loops; volume and pitch follow the car) */
     if (A3_T_AUDIO_SOURCE != 0xFFFFFFFFu) {

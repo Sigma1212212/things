@@ -99,7 +99,10 @@ fields show **Rpm**, **Gear**, **Wheel Slip** and **Body Roll**.
 Every car spawned with `spawn_car` has an **Engine Sound** (a synthesized
 4-cylinder loop whose pitch follows the rpm and whose volume follows the
 throttle) and a **Tire Sound** (squeal that fades in with wheel slip).
-Traffic cars have no sound loops (there are dozens of them).
+Sliding tires smoke (two particle emitters at the rear wheels, emission
+following each tire's slip) and leave skid marks on the road (thin dark
+strips from a recycled pool of 320, so the oldest marks disappear). Traffic
+cars have no sound loops or smoke emitters (there are dozens of them).
 
 ### Arcade
 
