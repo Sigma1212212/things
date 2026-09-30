@@ -365,10 +365,14 @@ const char *A3_SHADER_TONEMAP_FS =
     "uniform float u_saturation;\n"
     "uniform float u_contrast;\n"
     "uniform vec3 u_tint;\n"
+    "uniform sampler2D u_adapt;\n"       /* 1x1: adapted log2 luminance */
+    "uniform float u_auto_exposure;\n"   /* 0 = off .. 1 = full eye adaptation */
     "vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }\n"
     "void main() {\n"
     "    vec3 c = texture(u_hdr, v_uv).rgb + texture(u_bloom, v_uv).rgb * u_bloom_intensity;\n"
-    "    c *= u_exposure * u_tint;\n"
+    "    float ev = 0.0;\n"
+    "    if (u_auto_exposure > 0.0) ev = clamp(-2.4739 - texture(u_adapt, vec2(0.5)).r, -1.5, 1.0) * u_auto_exposure;\n"   /* toward mid grey (log2 0.18) */
+    "    c *= u_exposure * exp2(ev) * u_tint;\n"
     /* contrast around mid grey in log space, then saturation */
     "    c = max(c, vec3(0.0));\n"
     "    c = exp2((log2(c + 1e-5) - log2(0.18)) * u_contrast + log2(0.18));\n"
@@ -458,10 +462,35 @@ const char *A3_SHADER_COMPOSITE_FS =
     "uniform float u_fog_falloff;\n"
     "uniform vec3 u_sun_dir;\n"
     "uniform vec3 u_sun_color;\n"
+    "uniform vec3 u_sun_screen;\n"     /* xy = sun position (uv), z = visibility */
+    "uniform float u_shafts;\n"
+    /* light shafts: march from the pixel toward the sun on screen and gather
+       unoccluded sky near the sun; buildings and trees in between leave dark
+       streaks (screen-space, so the sun must be on or near the screen) */
+    "vec3 light_shafts() {\n"
+    "    if (u_shafts <= 0.0 || u_sun_screen.z <= 0.0) return vec3(0.0);\n"
+    "    vec2 d = u_sun_screen.xy - v_uv;\n"
+    "    vec2 stepv = d / 32.0;\n"
+    "    float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);\n"
+    "    vec2 uv = v_uv + stepv * dither;\n"
+    "    vec3 acc = vec3(0.0);\n"
+    "    float w = 1.0;\n"
+    "    for (int i = 0; i < 32; ++i) {\n"
+    "        if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {\n"
+    "            float sky = step(1.0, texture(u_depth, uv).r);\n"
+    "            float near_sun = exp(-length((uv - u_sun_screen.xy) * vec2(1.6, 1.0)) * 9.0);\n"
+    "            acc += min(texture(u_hdr, uv).rgb, vec3(6.0)) * sky * near_sun * w;\n"
+    "        }\n"
+    "        w *= 0.97;\n"
+    "        uv += stepv;\n"
+    "    }\n"
+    "    return acc / 32.0 * 0.6 * u_shafts * u_sun_screen.z;\n"
+    "}\n"
     "void main() {\n"
     "    vec3 col = texture(u_hdr, v_uv).rgb;\n"
     "    float depth = texture(u_depth, v_uv).r;\n"
-    "    if (depth >= 1.0) { o_color = vec4(col, 1.0); return; }\n"
+    "    vec3 shafts = light_shafts();\n"
+    "    if (depth >= 1.0) { o_color = vec4(col + shafts, 1.0); return; }\n"
     "    vec3 vp = view_pos(v_uv);\n"
     "    vec3 wp = (u_inv_view * vec4(vp, 1.0)).xyz;\n"
     "    vec4 nr = texture(u_normal, v_uv);\n"
@@ -508,7 +537,48 @@ const char *A3_SHADER_COMPOSITE_FS =
     "    float sun = pow(max(dot(ray / max(dist, 1e-4), -u_sun_dir), 0.0), 8.0);\n"
     "    vec3 fc = u_fog_color + u_sun_color * sun * 0.25;\n"
     "    col = mix(col, fc, clamp(fog, 0.0, 1.0));\n"
-    "    o_color = vec4(col, 1.0);\n"
+    "    o_color = vec4(col + shafts, 1.0);\n"
+    "}\n";
+
+/* Auto exposure: log luminance of the scene at 64x64, box-averaged down to
+ * 1x1, then an adaptation step (the eye adjusts faster to light than to dark). */
+const char *A3_SHADER_LUM_FS =
+    "in vec2 v_uv;\n"
+    "out vec4 o_color;\n"
+    "uniform sampler2D u_src;\n"
+    "uniform vec2 u_texel;\n"
+    "void main() {\n"
+    "    float s = 0.0;\n"
+    "    for (int y = 0; y < 2; ++y) for (int x = 0; x < 2; ++x) {\n"
+    "        vec3 c = texture(u_src, v_uv + (vec2(x, y) - 0.5) * u_texel * 0.5).rgb;\n"
+    "        s += log2(max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 1e-4));\n"
+    "    }\n"
+    "    o_color = vec4(s * 0.25);\n"
+    "}\n";
+
+const char *A3_SHADER_AVG4_FS =
+    "in vec2 v_uv;\n"
+    "out vec4 o_color;\n"
+    "uniform sampler2D u_src;\n"
+    "uniform vec2 u_src_texel;\n"
+    "void main() {\n"
+    "    float s = 0.0;\n"
+    "    for (int y = 0; y < 4; ++y) for (int x = 0; x < 4; ++x)\n"
+    "        s += texture(u_src, v_uv + (vec2(x, y) - 1.5) * u_src_texel).r;\n"
+    "    o_color = vec4(s / 16.0);\n"
+    "}\n";
+
+const char *A3_SHADER_ADAPT_FS =
+    "in vec2 v_uv;\n"
+    "out vec4 o_color;\n"
+    "uniform sampler2D u_prev;\n"
+    "uniform sampler2D u_avg;\n"
+    "uniform float u_k_up;\n"
+    "uniform float u_k_down;\n"
+    "void main() {\n"
+    "    float p = texture(u_prev, vec2(0.5)).r, a = texture(u_avg, vec2(0.5)).r;\n"
+    "    float k = a > p ? u_k_up : u_k_down;\n"
+    "    o_color = vec4(p + (a - p) * k);\n"
     "}\n";
 
 /* Bloom: soft-threshold prefilter + 13-tap downsample; 9-tap tent upsample (added). */

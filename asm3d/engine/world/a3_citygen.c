@@ -446,6 +446,9 @@ void a3_city_apply_time(A3World *w, A3CityTime t) {
         ws->contrast = 1.08f;
         ws->tint = a3_v4(0.96f, 0.96f, 1.0f, 1);
         ws->time_of_day = 23.0f;
+        ws->auto_exposure = 0.15f;        /* keep the night dark and the neon popping */
+        ws->light_shafts = 0.0f;
+        ws->cloud_cover = 0.35f;
         l->color = a3_v4(0.55f, 0.62f, 0.9f, 1);
         l->intensity = 0.07f;
         st->rotation = a3_quat_euler(-38 * A3_DEG2RAD, 120 * A3_DEG2RAD, 0);
@@ -464,6 +467,9 @@ void a3_city_apply_time(A3World *w, A3CityTime t) {
         ws->contrast = 1.06f;
         ws->tint = a3_v4(1.0f, 0.95f, 0.92f, 1);
         ws->time_of_day = 19.2f;
+        ws->auto_exposure = 0.35f;
+        ws->light_shafts = 0.7f;
+        ws->cloud_cover = 0.5f;
         l->color = a3_v4(1.0f, 0.62f, 0.38f, 1);
         l->intensity = 1.0f;
         st->rotation = a3_quat_euler(-9 * A3_DEG2RAD, -95 * A3_DEG2RAD, 0);   /* low in the west, over the mainland */
@@ -482,6 +488,9 @@ void a3_city_apply_time(A3World *w, A3CityTime t) {
         ws->contrast = 1.04f;
         ws->tint = a3_v4(1.0f, 0.99f, 0.96f, 1);
         ws->time_of_day = 12.5f;
+        ws->auto_exposure = 0.5f;
+        ws->light_shafts = 0.5f;
+        ws->cloud_cover = 0.4f;
         l->color = a3_v4(1.0f, 0.95f, 0.86f, 1);
         l->intensity = 1.05f;
         st->rotation = a3_quat_euler(-58 * A3_DEG2RAD, 30 * A3_DEG2RAD, 0);

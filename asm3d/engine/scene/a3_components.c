@@ -121,6 +121,8 @@ void a3_register_core_components(void) {
     wd.contrast = 1.0f;
     wd.tint = a3_v4(1, 1, 1, 1);
     wd.cloud_cover = 0.4f;
+    wd.auto_exposure = 0.5f;
+    wd.light_shafts = 0.6f;
     t = a3_component_register("WorldSettings", "World", sizeof(A3CWorldSettings), 16, &wd, A3_COMP_BUILTIN | A3_COMP_UNIQUE,
         "Sky, ambient light, fog, gravity and time of day for the whole scene.");
     A3_T_WORLD_SETTINGS = t;
@@ -146,6 +148,8 @@ void a3_register_core_components(void) {
     a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, contrast, A3_FIELD_F32, "Contrast", "1 = unchanged."), 0.5f, 2, 0.01f)->flags |= A3_FIELD_FLAG_ADVANCED;
     A3_REFLECT_FIELD(t, A3CWorldSettings, tint, A3_FIELD_COLOR, "Color Grade", "Tints the final image (warm or cool looks).")->flags |= A3_FIELD_FLAG_ADVANCED;
     a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, cloud_cover, A3_FIELD_F32, "Clouds", "Procedural cloud layer drifting with the wind. 0 = clear sky."), 0, 1, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, auto_exposure, A3_FIELD_F32, "Auto Exposure", "Eye adaptation: the image brightens in dark places and darkens toward a bright sky, over a second or two. 0 = fixed exposure."), 0, 1, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, light_shafts, A3_FIELD_F32, "Light Shafts", "Rays of sunlight through gaps between buildings and trees when looking toward the sun."), 0, 2, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
 }
 
 /* ---- Transform system ---- */

@@ -93,7 +93,9 @@ typedef struct A3CWorldSettings {
     f32 contrast;
     A3Vec4 tint;              /* color grade multiplier */
     f32 cloud_cover;          /* 0 = clear sky .. 1 = mostly cloudy (procedural cloud layer) */
-    f32 _pad_ws[3];
+    f32 auto_exposure;        /* 0 = fixed exposure .. 1 = full eye adaptation */
+    f32 light_shafts;         /* sun rays through gaps (screen-space) */
+    f32 _pad_ws;
 } A3CWorldSettings;
 
 void a3_register_core_components(void);

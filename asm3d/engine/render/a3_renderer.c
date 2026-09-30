@@ -69,7 +69,13 @@ struct A3Renderer {
     A3RenderSettings settings;
     A3RenderFrameInfo info;
     A3RhiShader lit, shadow, sky, tonemap, fxaa, lines, grid, particle;
-    A3RhiShader ssao, blur4, composite, bloom_down, bloom_up;
+    A3RhiShader ssao, blur4, composite, bloom_down, bloom_up, lum, avg4, adapt;
+    /* auto exposure: 64 -> 16 -> 4 -> 1 log-luminance chain, 2 adaptation texels */
+    A3RhiTexture lum_tex[4], adapt_tex[2];
+    A3RhiTarget lum_target[4], adapt_target[2];
+    u32 adapt_cur;
+    b32 adapt_valid;
+    u64 adapt_clock;
     /* lights of the frame (texture) */
     A3RhiTexture light_tex;
     A3Vec4 light_texels[LIGHT_CAP * 3];
@@ -165,6 +171,9 @@ A3Renderer *a3_renderer_create(void) {
     r->ssao = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_SSAO_FS, "ssao");
     r->blur4 = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_BLUR4_FS, "blur4");
     r->composite = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_COMPOSITE_FS, "composite");
+    r->lum = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_LUM_FS, "luminance");
+    r->avg4 = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_AVG4_FS, "average4");
+    r->adapt = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_ADAPT_FS, "adapt");
     r->bloom_down = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_BLOOM_DOWN_FS, "bloom_down");
     r->bloom_up = make_shader(A3_SHADER_FULLSCREEN_VS, A3_SHADER_BLOOM_UP_FS, "bloom_up");
     {
@@ -257,7 +266,9 @@ void a3_renderer_destroy(A3Renderer *r) {
     if (r->shadow_target.id) a3_rhi_target_destroy(r->shadow_target);
     if (r->shadow_tex.id) a3_rhi_texture_destroy(r->shadow_tex);
     A3RhiShader shaders[] = { r->lit, r->shadow, r->sky, r->tonemap, r->fxaa, r->lines, r->grid, r->particle,
-                              r->ssao, r->blur4, r->composite, r->bloom_down, r->bloom_up };
+                              r->ssao, r->blur4, r->composite, r->bloom_down, r->bloom_up, r->lum, r->avg4, r->adapt };
+    for (u32 i = 0; i < 4; ++i) { if (r->lum_target[i].id) a3_rhi_target_destroy(r->lum_target[i]); if (r->lum_tex[i].id) a3_rhi_texture_destroy(r->lum_tex[i]); }
+    for (u32 i = 0; i < 2; ++i) { if (r->adapt_target[i].id) a3_rhi_target_destroy(r->adapt_target[i]); if (r->adapt_tex[i].id) a3_rhi_texture_destroy(r->adapt_tex[i]); }
     if (r->light_tex.id) a3_rhi_texture_destroy(r->light_tex);
     for (u32 i = 0; i < A3_ARRAY_COUNT(shaders); ++i) a3_rhi_shader_destroy(shaders[i]);
     for (u32 i = 0; i < MAX_MATERIALS; ++i) if (r->materials[i].used) a3_rhi_shader_destroy(r->materials[i].shader);
@@ -341,6 +352,31 @@ static b32 ensure_targets(A3Renderer *r, i32 w, i32 h) {
     r->rt_w = w;
     r->rt_h = h;
     return 1;
+}
+
+static b32 ensure_exposure(A3Renderer *r) {
+    if (r->adapt_target[1].id) return 1;
+    if (!r->lum.id || !r->avg4.id || !r->adapt.id) return 0;
+    static const i32 sizes[4] = { 64, 16, 4, 1 };
+    A3TextureDesc d;
+    a3_zero_struct(&d);
+    d.format = A3_TEX_R16F;
+    d.filter = A3_FILTER_NEAREST;
+    d.wrap = A3_WRAP_CLAMP;
+    d.debug_name = "luminance";
+    for (u32 i = 0; i < 4; ++i) {
+        d.width = d.height = sizes[i];
+        r->lum_tex[i] = a3_rhi_texture_create(&d);
+        r->lum_target[i] = a3_rhi_target_create(r->lum_tex[i], (A3RhiTexture){ 0 });
+    }
+    d.width = d.height = 1;
+    d.debug_name = "adaptation";
+    for (u32 i = 0; i < 2; ++i) {
+        r->adapt_tex[i] = a3_rhi_texture_create(&d);
+        r->adapt_target[i] = a3_rhi_target_create(r->adapt_tex[i], (A3RhiTexture){ 0 });
+    }
+    r->adapt_valid = 0;
+    return r->adapt_target[1].id != 0;
 }
 
 static b32 ensure_shadow(A3Renderer *r) {
@@ -910,6 +946,19 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
         a3_rhi_set_float(r->composite, "u_fog_falloff", ws->fog_height_falloff);
         a3_rhi_set_vec3(r->composite, "u_sun_dir", ls.sun_dir);
         a3_rhi_set_vec3(r->composite, "u_sun_color", ls.has_sun ? ls.sun_color : a3_v3_zero());
+        {
+            /* where the sun is on screen, and how much its shafts should show */
+            A3Vec3 to_sun = a3_v3_neg(ls.sun_dir);
+            A3Vec3 far_p = a3_v3_add(v->camera_pos, a3_v3_scale(to_sun, 1000.0f));
+            A3Vec4 clip = a3_mat4_mul_v4(&view_proj, a3_v4(far_p.x, far_p.y, far_p.z, 1.0f));
+            A3Vec3 fwd = a3_v3_norm(a3_mat4_mul_dir(&inv_view, a3_v3(0, 0, -1)));
+            f32 facing = a3_smoothstep(0.0f, 0.35f, a3_v3_dot(fwd, to_sun));
+            f32 elev = a3_smoothstep(-0.03f, 0.06f, to_sun.y);
+            f32 vis = clip.w > 0.01f && ls.has_sun ? facing * elev : 0.0f;
+            A3Vec2 suv = clip.w > 0.01f ? a3_v2(clip.x / clip.w * 0.5f + 0.5f, clip.y / clip.w * 0.5f + 0.5f) : a3_v2(0.5f, 0.5f);
+            a3_rhi_set_vec3(r->composite, "u_sun_screen", a3_v3(suv.x, suv.y, vis));
+            a3_rhi_set_float(r->composite, "u_shafts", ws->light_shafts);
+        }
         a3_rhi_bind_texture(0, r->hdr_color);
         a3_rhi_bind_texture(1, r->hdr_depth);
         a3_rhi_bind_texture(2, ts->normal);
@@ -946,6 +995,41 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
             a3_rhi_draw_fullscreen();
         }
     }
+    /* auto exposure: average log luminance, then adapt over time (real time, so it also works in the editor) */
+    b32 do_auto = ws->auto_exposure > 0 && ensure_exposure(r);
+    if (do_auto) {
+        static const i32 sizes[4] = { 64, 16, 4, 1 };
+        a3_rhi_set_state(&post);
+        a3_rhi_target_bind(r->lum_target[0], 64, 64);
+        a3_rhi_shader_bind(r->lum);
+        a3_rhi_set_int(r->lum, "u_src", 0);
+        a3_rhi_set_vec2(r->lum, "u_texel", a3_v2(1.0f / 64.0f, 1.0f / 64.0f));
+        a3_rhi_bind_texture(0, scene_tex);
+        a3_rhi_draw_fullscreen();
+        a3_rhi_shader_bind(r->avg4);
+        a3_rhi_set_int(r->avg4, "u_src", 0);
+        for (u32 i = 1; i < 4; ++i) {
+            a3_rhi_target_bind(r->lum_target[i], sizes[i], sizes[i]);
+            a3_rhi_set_vec2(r->avg4, "u_src_texel", a3_v2(1.0f / (f32)sizes[i - 1], 1.0f / (f32)sizes[i - 1]));
+            a3_rhi_bind_texture(0, r->lum_tex[i - 1]);
+            a3_rhi_draw_fullscreen();
+        }
+        u64 now = a3_time_ns();
+        f32 dt = r->adapt_clock ? a3_clampf((f32)((f64)(now - r->adapt_clock) / 1e9), 0.0f, 0.25f) : 0.0f;
+        r->adapt_clock = now;
+        u32 next = r->adapt_cur ^ 1u;
+        a3_rhi_target_bind(r->adapt_target[next], 1, 1);
+        a3_rhi_shader_bind(r->adapt);
+        a3_rhi_set_int(r->adapt, "u_prev", 0);
+        a3_rhi_set_int(r->adapt, "u_avg", 1);
+        a3_rhi_set_float(r->adapt, "u_k_up", r->adapt_valid ? 1.0f - a3_expf(-dt * 2.5f) : 1.0f);    /* to brighter: fast */
+        a3_rhi_set_float(r->adapt, "u_k_down", r->adapt_valid ? 1.0f - a3_expf(-dt * 1.0f) : 1.0f);  /* to darker: slower */
+        a3_rhi_bind_texture(0, r->adapt_tex[r->adapt_cur]);
+        a3_rhi_bind_texture(1, r->lum_tex[3]);
+        a3_rhi_draw_fullscreen();
+        r->adapt_cur = next;
+        r->adapt_valid = 1;
+    }
     f32 exposure = (v->exposure > 0 ? v->exposure : 1.0f) * (ws->exposure > 0 ? ws->exposure : 1.0f);
     A3Vec4 tint = a3_color_to_linear(ws->tint);
     if (r->settings.fxaa && r->fxaa.id) a3_rhi_target_bind(r->ldr_target, r->rt_w, r->rt_h);
@@ -960,8 +1044,11 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
     a3_rhi_set_float(r->tonemap, "u_saturation", ws->saturation > 0 ? ws->saturation : 1.0f);
     a3_rhi_set_float(r->tonemap, "u_contrast", ws->contrast > 0 ? ws->contrast : 1.0f);
     a3_rhi_set_vec3(r->tonemap, "u_tint", (tint.x + tint.y + tint.z) > 0 ? a3_v4_xyz(tint) : a3_v3_one());
+    a3_rhi_set_int(r->tonemap, "u_adapt", 2);
+    a3_rhi_set_float(r->tonemap, "u_auto_exposure", do_auto ? ws->auto_exposure : 0.0f);
     a3_rhi_bind_texture(0, scene_tex);
     a3_rhi_bind_texture(1, do_bloom ? ts->bloom[0] : scene_tex);
+    a3_rhi_bind_texture(2, do_auto ? r->adapt_tex[r->adapt_cur] : a3_assets_white_texture());
     a3_rhi_draw_fullscreen();
     if (r->settings.fxaa && r->fxaa.id) {
         a3_rhi_target_bind(v->target, v->width, v->height);
