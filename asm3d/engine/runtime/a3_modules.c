@@ -8,6 +8,7 @@
 #include "../world/a3_traffic.h"
 #include "../world/a3_citygen.h"
 #include "../world/a3_people.h"
+#include "../world/a3_weather.h"
 #include "../physics/a3_vehicle.h"
 #include "a3_engine.h"
 #include "../physics/a3_physics.h"
@@ -163,6 +164,8 @@ static void sys_scripts_stop(A3SystemContext *ctx, void *user) { A3_UNUSED(user)
 
 static void sys_audio(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_audio_update_world(ctx->world); }
 static void sys_audio_stop(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_audio_stop_world(ctx->world); }
+static void sys_weather(A3SystemContext *ctx, void *user) { A3_UNUSED(user); a3_weather_update(ctx->world); }
+static void sys_weather_stop(A3SystemContext *ctx, void *user) { A3_UNUSED(ctx); A3_UNUSED(user); a3_weather_stop(); }
 
 void a3_modules_register_all(void) {
     a3_procmeshes_register();
@@ -267,6 +270,14 @@ void a3_modules_register_all(void) {
     d.order = 50;
     d.update = sys_particles;
     d.run_in_editor = 1;
+    a3_systems_register(&d);
+
+    a3_zero_struct(&d);
+    d.name = "Weather";
+    d.phase = A3_PHASE_LATE;
+    d.order = 90;
+    d.update = sys_weather;
+    d.on_stop = sys_weather_stop;
     a3_systems_register(&d);
 
     a3_zero_struct(&d);

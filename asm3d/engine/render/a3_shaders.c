@@ -79,6 +79,9 @@ const char *A3_SHADER_LIT_FS_HEAD =
     "uniform float u_ambient;\n"
     "uniform vec3 u_fog_color;\n"
     "uniform float u_fog_density;\n"
+    "uniform float u_wetness;\n"        /* weather: 0 dry .. 1 soaked */
+    "uniform float u_rain;\n"           /* 0 .. 1: raindrop ripples in puddles */
+    "uniform float u_flash;\n"          /* lightning */
     /* local lights: 256 per row, 3 texels each (position + range, color + type, spot direction + cos) */
     "uniform sampler2D u_light_tex;\n"
     "uniform int u_fog_in_post;\n"
@@ -168,6 +171,29 @@ const char *A3_SHADER_LIT_FS_TAIL =
     "    s.emissive = vec3(0.0); s.occlusion = 1.0;\n"
     "    a3_surface(s);\n"
     "    s.normal = normalize(s.normal);\n"
+    /* wet weather: rough surfaces darken, everything facing up gets glossy,
+       puddles collect in the low spots and raindrops ripple them */
+    "    if (u_wetness > 0.0) {\n"
+    "        float up = smoothstep(0.5, 0.9, s.normal.y);\n"
+    "        float wet = u_wetness * mix(0.3, 1.0, up);\n"
+    "        float porous = smoothstep(0.3, 0.8, s.roughness) * (1.0 - s.metallic);\n"
+    "        float puddle = up * smoothstep(0.66 - u_wetness * 0.22, 0.72 - u_wetness * 0.22, a3_fbm(s.world_pos * 0.17 + 7.3)) * u_wetness;\n"
+    "        s.albedo *= 1.0 - 0.5 * wet * porous;\n"
+    "        s.roughness = mix(s.roughness, min(s.roughness, 0.2), wet * 0.85);\n"
+    "        s.roughness = mix(s.roughness, 0.02, puddle);\n"
+    "        s.albedo *= 1.0 - 0.35 * puddle;\n"
+    "        if (u_rain > 0.0 && up > 0.0) {\n"
+    "            vec2 rp = s.world_pos.xz * 1.7;\n"
+    "            vec2 cell = floor(rp), f = fract(rp);\n"
+    "            vec3 hsh = a3_hash3(vec3(cell, 3.7));\n"
+    "            float t = fract(u_time * 1.1 + hsh.x);\n"
+    "            vec2 dv = f - (0.25 + hsh.yz * 0.5);\n"
+    "            float r = length(dv);\n"
+    "            float ring = sin((r - t * 0.55) * 45.0) * exp(-r * 9.0) * (1.0 - t) * step(hsh.x, u_rain);\n"
+    "            vec2 dir = r > 1e-4 ? dv / r : vec2(0.0);\n"
+    "            s.normal = normalize(s.normal + vec3(dir.x, 0.0, dir.y) * ring * 0.35 * max(puddle, wet * 0.3));\n"
+    "        }\n"
+    "    }\n"
     "    vec3 color = vec3(0.0);\n"
     "    /* sun */\n"
     "    color += a3_brdf(s, -u_sun_dir, u_sun_color) * a3_shadow(s.normal);\n"
@@ -201,6 +227,7 @@ const char *A3_SHADER_LIT_FS_TAIL =
     "    vec3 env = mix(sky_refl, mix(u_ground_color, u_sky_color, smoothstep(-0.2, 0.4, refl.y)) * u_ambient * 2.0, clamp(s.roughness * 1.6, 0.0, 1.0));\n"
     "    color += (amb * s.albedo * (1.0 - fa) * (1.0 - s.metallic) + env * fa * (1.0 - s.roughness * 0.6)) * s.occlusion;\n"
     "    color += s.emissive + s.albedo * v_params.z;\n"
+    "    color += s.albedo * u_flash * vec3(0.75, 0.8, 1.0) * (0.35 + 0.65 * max(s.normal.y, 0.0));\n"   /* lightning */
     "    /* fog (done in the post pass for opaque surfaces) */\n"
     "    if (u_fog_in_post == 0 || s.alpha < 0.999) {\n"
     "        float dist = length(u_camera_pos - s.world_pos);\n"
@@ -258,6 +285,8 @@ const char *A3_SHADER_SKY_FS =
     "uniform vec3 u_sun_color;\n"
     "uniform float u_time;\n"
     "uniform float u_clouds;\n"
+    "uniform float u_rain;\n"
+    "uniform float u_flash;\n"
     "float hash2(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
     "float hash3(vec3 p) { p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.x + p.y) * p.z); }\n"
     "float vnoise(vec2 p) {\n"
@@ -319,7 +348,7 @@ const char *A3_SHADER_SKY_FS =
     "            float t = (1600.0 - u_camera_pos.y) / h;\n"
     "            vec2 wind = vec2(u_time * 6.0, u_time * 2.0);\n"
     "            vec2 p = (u_camera_pos.xz + dir.xz * t + wind) * 0.00055;\n"
-    "            float cover = mix(0.62, 0.42, clamp(u_clouds, 0.0, 1.0));\n"
+    "            float cover = mix(mix(0.62, 0.42, clamp(u_clouds, 0.0, 1.0)), 0.18, u_rain);\n"
     "            float n = fbm(p);\n"
     "            float dens = smoothstep(cover, cover + 0.2, n);\n"
     "            if (dens > 0.001) {\n"
@@ -333,7 +362,8 @@ const char *A3_SHADER_SKY_FS =
     "                vec3 cloud = amb_c * (0.75 + 0.25 * n) + sun_c * lit * 0.95;\n"
     "                /* silver lining toward the sun */\n"
     "                cloud += u_sun_color * pow(max(mu, 0.0), 24.0) * (1.0 - dens) * 2.0;\n"
-    "                cloud = mix(cloud, vec3(dot(cloud, vec3(0.33))) * vec3(0.55, 0.55, 0.7) + u_sky_horizon * 0.25, night * 0.7);\n"
+    "                cloud = mix(cloud, vec3(dot(cloud, vec3(0.33))) * vec3(0.55, 0.55, 0.7) + u_sky_horizon * 0.25, night * 0.7);\n"    "                cloud = mix(cloud, vec3(dot(cloud, vec3(0.3))) * (0.55 - 0.25 * n), u_rain * 0.8);\n"   /* rain clouds: grey and dark underneath */
+    "                cloud += vec3(0.8, 0.85, 1.0) * u_flash * (0.6 + n);\n"
     "                float fade = smoothstep(0.015, 0.2, h) * exp(-t * 0.00003);\n"
     "                col = mix(col, cloud, dens * fade * 0.92);\n"
     "            }\n"
@@ -342,7 +372,7 @@ const char *A3_SHADER_SKY_FS =
     "        col = mix(u_sky_horizon, u_ground_color, clamp(-h * 4.0, 0.0, 1.0));\n"
     "    }\n"
     "    /* the sun disk (limb-darkened) by day, the moon (with maria) at night */\n"
-    "    float vis = smoothstep(-0.02, 0.01, h);\n"
+    "    float vis = smoothstep(-0.02, 0.01, h) * (1.0 - u_rain * 0.95);\n"   /* hidden behind rain clouds */
     "    if (night < 0.5) {\n"
     "        float cosr = 0.99985;\n"
     "        if (mu > cosr - 0.00008) {\n"
@@ -364,6 +394,7 @@ const char *A3_SHADER_SKY_FS =
     "        }\n"
     "        col += vec3(0.6, 0.66, 0.9) * pow(max(mu, 0.0), 180.0) * 0.35 * vis;\n"
     "    }\n"
+    "    col = mix(col, vec3(dot(col, vec3(0.3))) * 0.8, u_rain * 0.6) + vec3(0.6, 0.65, 0.8) * u_flash * 0.5;\n"
     "    o_color = vec4(col, 1.0);\n"
     "}\n";
 
@@ -477,6 +508,33 @@ const char *A3_SHADER_COMPOSITE_FS =
     "uniform vec3 u_sun_color;\n"
     "uniform vec3 u_sun_screen;\n"     /* xy = sun position (uv), z = visibility */
     "uniform float u_shafts;\n"
+    "uniform float u_rain;\n"
+    "uniform float u_time;\n"
+    "uniform vec2 u_view_angles;\n"    /* camera yaw, pitch: keeps the rain still when the camera turns */
+    "uniform float u_aspect;\n"
+    /* rain: three layers of falling streaks at 2, 5 and 12 m, each hidden
+       where the scene is closer than the layer */
+    "vec3 rain_streaks(float scene_dist, vec3 base) {\n"
+    "    if (u_rain <= 0.0) return vec3(0.0);\n"
+    "    vec3 acc = vec3(0.0);\n"
+    "    for (int l = 0; l < 3; ++l) {\n"
+    "        float fl = float(l);\n"
+    "        float dist = fl == 0.0 ? 2.0 : (fl == 1.0 ? 5.0 : 12.0);\n"
+    "        if (scene_dist < dist) continue;\n"
+    "        float scale = 7.0 + fl * 9.0;\n"
+    "        vec2 uv = vec2(v_uv.x * u_aspect, v_uv.y) + vec2(u_view_angles.x, -u_view_angles.y) * 0.9;\n"
+    "        uv.x += uv.y * 0.12;\n"                                  /* wind slant */
+    "        vec2 g = uv * vec2(scale, scale * 0.5) + vec2(fl * 3.1, u_time * (5.5 - fl * 1.2));\n"
+    "        vec2 cell = floor(g), f = fract(g);\n"
+    "        float h = fract(sin(dot(cell, vec2(127.1, 311.7)) + fl * 17.0) * 43758.5453);\n"
+    "        float h2 = fract(h * 91.7);\n"
+    "        if (h > u_rain * 0.75) continue;\n"
+    "        float x = 0.15 + h2 * 0.7;\n"
+    "        float streak = smoothstep(0.03 / (1.0 + fl), 0.0, abs(f.x - x)) * smoothstep(0.0, 0.25, f.y) * smoothstep(1.0, 0.55, f.y);\n"
+    "        acc += streak * (0.5 - fl * 0.12);\n"
+    "    }\n"
+    "    return acc * (base * 0.5 + u_fog_color * 0.35 + 0.03);\n"
+    "}\n"
     /* light shafts: march from the pixel toward the sun on screen and gather
        unoccluded sky near the sun; buildings and trees in between leave dark
        streaks (screen-space, so the sun must be on or near the screen) */
@@ -503,7 +561,7 @@ const char *A3_SHADER_COMPOSITE_FS =
     "    vec3 col = texture(u_hdr, v_uv).rgb;\n"
     "    float depth = texture(u_depth, v_uv).r;\n"
     "    vec3 shafts = light_shafts();\n"
-    "    if (depth >= 1.0) { o_color = vec4(col + shafts, 1.0); return; }\n"
+    "    if (depth >= 1.0) { o_color = vec4(col + shafts + rain_streaks(1e9, col), 1.0); return; }\n"
     "    vec3 vp = view_pos(v_uv);\n"
     "    vec3 wp = (u_inv_view * vec4(vp, 1.0)).xyz;\n"
     "    vec4 nr = texture(u_normal, v_uv);\n"
@@ -550,7 +608,7 @@ const char *A3_SHADER_COMPOSITE_FS =
     "    float sun = pow(max(dot(ray / max(dist, 1e-4), -u_sun_dir), 0.0), 8.0);\n"
     "    vec3 fc = u_fog_color + u_sun_color * sun * 0.25;\n"
     "    col = mix(col, fc, clamp(fog, 0.0, 1.0));\n"
-    "    o_color = vec4(col + shafts, 1.0);\n"
+    "    o_color = vec4(col + shafts + rain_streaks(-vp.z, col), 1.0);\n"
     "}\n";
 
 /* Auto exposure: log luminance of the scene at 64x64, box-averaged down to

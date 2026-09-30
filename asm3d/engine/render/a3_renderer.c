@@ -2,6 +2,7 @@
  * ASM3D - a3_renderer.c
  */
 #include "a3_renderer.h"
+#include "../world/a3_weather.h"
 #include "a3_shaders.h"
 #include "a3_mesh.h"
 #include "../core/a3_log.h"
@@ -599,6 +600,8 @@ static u64 make_key(const Renderable *rd) {
            ((u64)batch_key_bits(rd->mesh, 16) << 24) | (u64)batch_key_bits(rd->texture, 24);
 }
 
+static f32 g_flash;   /* lightning of the frame */
+
 static void set_frame_uniforms(A3RhiShader s, const A3RenderView *v, const LightSet *ls, const A3CWorldSettings *ws,
                                const A3Mat4 *view_proj, const Cascade *cs, b32 shadows, i32 shadow_size) {
     a3_rhi_set_mat4(s, "u_view_proj", view_proj);
@@ -623,6 +626,9 @@ static void set_frame_uniforms(A3RhiShader s, const A3RenderView *v, const Light
     a3_rhi_set_vec2(s, "u_shadow_texel", a3_v2(1.0f / (f32)shadow_size, 1.0f / (f32)shadow_size));
     a3_rhi_set_int(s, "u_light_tex", 4);
     a3_rhi_set_int(s, "u_fog_in_post", 1);
+    a3_rhi_set_float(s, "u_wetness", a3_clampf(ws->wetness, 0.0f, 1.0f));
+    a3_rhi_set_float(s, "u_rain", a3_clampf(ws->rain, 0.0f, 1.0f));
+    a3_rhi_set_float(s, "u_flash", g_flash);
     A3_UNUSED(ls);
 }
 
@@ -645,6 +651,18 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
     LightSet ls;
     gather_lights(r, w, v->camera_pos, &ls, scratch);
     r->info.lights = ls.count + (ls.has_sun ? 1 : 0);
+    /* weather: rain clouds dim the sun, thicken and grey the fog; lightning */
+    f32 rain = a3_clampf(ws->rain, 0.0f, 1.0f);
+    g_flash = a3_weather_lightning(v->time, rain);
+    if (rain > 0.0f) {
+        ls.sun_color = a3_v3_scale(ls.sun_color, a3_weather_sun_factor(rain));
+        ws_copy.fog_density *= 1.0f + 2.0f * rain;
+        ws_copy.ambient_intensity *= 1.0f + 0.9f * rain;                  /* the grey sky lights everything evenly */
+        f32 fl = (ws_copy.fog_color.x + ws_copy.fog_color.y + ws_copy.fog_color.z) / 3.0f;
+        ws_copy.fog_color = a3_v4_lerp(ws_copy.fog_color, a3_v4(fl * 0.8f, fl * 0.82f, fl * 0.88f, 1), rain * 0.6f);
+        f32 tl = (ws_copy.sky_top.x + ws_copy.sky_top.y + ws_copy.sky_top.z) / 3.0f;
+        ws_copy.sky_top = a3_v4_lerp(ws_copy.sky_top, a3_v4(tl, tl, tl * 1.05f, 1), rain * 0.7f);
+    }
 
     /* ---- gather renderables ---- */
     u32 n_mr = a3_component_count(w, A3_T_MESH_RENDERER);
@@ -807,6 +825,8 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
         a3_rhi_set_vec3(r->sky, "u_sun_color", ls.has_sun ? ls.sun_color : a3_v3_zero());
         a3_rhi_set_float(r->sky, "u_time", v->time);
         a3_rhi_set_float(r->sky, "u_clouds", ws_copy.cloud_cover);
+        a3_rhi_set_float(r->sky, "u_rain", rain);
+        a3_rhi_set_float(r->sky, "u_flash", g_flash);
         a3_rhi_draw_fullscreen();
     }
     a3_rhi_set_draw_buffers(2);
@@ -942,7 +962,15 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
         a3_rhi_set_float(r->composite, "u_ao_strength", do_ssao ? ws->ao_strength : 0.0f);
         a3_rhi_set_float(r->composite, "u_ssr_strength", r->settings.ssr ? ws->reflection_strength : 0.0f);
         a3_rhi_set_vec3(r->composite, "u_fog_color", a3_v4_xyz(ws_copy.fog_color));
-        a3_rhi_set_float(r->composite, "u_fog_density", ws->fog_density);
+        a3_rhi_set_float(r->composite, "u_fog_density", ws_copy.fog_density);
+        a3_rhi_set_float(r->composite, "u_rain", rain);
+        a3_rhi_set_float(r->composite, "u_time", v->time);
+        a3_rhi_set_float(r->composite, "u_aspect", (f32)r->rt_w / (f32)a3_maxi(r->rt_h, 1));
+        {
+            A3Vec3 cf = a3_v3_norm(a3_mat4_mul_dir(&inv_view, a3_v3(0, 0, -1)));
+            f32 fov_y = v->proj.m[5] != 0.0f ? 2.0f * a3_atanf(1.0f / a3_absf(v->proj.m[5])) : 1.0f;
+            a3_rhi_set_vec2(r->composite, "u_view_angles", a3_v2(a3_atan2f(cf.x, -cf.z) / fov_y, a3_asinf(a3_clampf(cf.y, -1, 1)) / fov_y));
+        }
         a3_rhi_set_float(r->composite, "u_fog_falloff", ws->fog_height_falloff);
         a3_rhi_set_vec3(r->composite, "u_sun_dir", ls.sun_dir);
         a3_rhi_set_vec3(r->composite, "u_sun_color", ls.has_sun ? ls.sun_color : a3_v3_zero());

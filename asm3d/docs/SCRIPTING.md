@@ -104,7 +104,7 @@ Dictionaries/maps, closures, classes and methods, string formatting beyond
 
 ## Built-in functions
 
-Also listed in the editor under **Docs > Script API** (97 functions). `pi` and `tau` are
+Also listed in the editor under **Docs > Script API** (102 functions). `pi` and `tau` are
 constants.
 
 ### Basics
@@ -240,6 +240,16 @@ constants.
 | `raycast(origin, direction, max_distance)` | The first object hit by a ray, or nil (ignores the object running the script). |
 | `raycast_hit(origin, direction, max_distance)` | [object, point, normal, distance] of the first hit, or nil. |
 | `overlap_sphere(center, radius)` | A list of objects with colliders inside a sphere. |
+
+### City
+
+| Function | What it does |
+|---|---|
+| `spawn_car(name, position, yaw, color, style)` | Creates a drivable car (Vehicle) facing yaw degrees; style is sedan, sports, suv, hatch, taxi or police. Set car.Vehicle.use_input = true to drive it. |
+| `road_point(center, min_distance, max_distance)` | A random point on a road of the city, between the distances from center (nil without roads). |
+| `nearest_road(position)` | [point, direction] of the closest road center line, or nil. |
+| `city_time("night")` | Changes the sky, sun and look to "day", "sunset" or "night". |
+| `weather(0.8)` | Rain from 0 (dry) to 1 (downpour): wet streets and puddles, rain clouds, lightning in heavy rain, less tire grip. |
 
 ### HUD
 

@@ -95,7 +95,8 @@ typedef struct A3CWorldSettings {
     f32 cloud_cover;          /* 0 = clear sky .. 1 = mostly cloudy (procedural cloud layer) */
     f32 auto_exposure;        /* 0 = fixed exposure .. 1 = full eye adaptation */
     f32 light_shafts;         /* sun rays through gaps (screen-space) */
-    f32 _pad_ws;
+    f32 rain;                 /* 0..1 (see a3_weather.h) */
+    f32 wetness;              /* 0..1 wet surfaces and puddles */
 } A3CWorldSettings;
 
 void a3_register_core_components(void);

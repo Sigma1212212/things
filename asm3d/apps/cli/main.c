@@ -26,6 +26,7 @@
 #include "../../engine/modeling/a3_modeling_kernels.h"
 #include "../../engine/resource/a3_assets.h"
 #include "../../engine/world/a3_citygen.h"
+#include "../../engine/world/a3_weather.h"
 #include "../../engine/world/a3_traffic.h"
 #include "../../engine/core/a3_log.h"
 #include "../../engine/core/a3_string.h"
@@ -1277,6 +1278,11 @@ static b32 c_world_city(const Args *a) {
     A3CityStats st;
     b32 ok = a3_city_generate(w, &d, &st, &roads);
     if (!ok) { a3_strbuf_free(&roads); a3_world_destroy(w); return fail(0, "city generation failed"); }
+    if (has_opt(a, "rain")) {
+        f32 rain = (f32)atof(opt(a, "rain", "0.8"));
+        if (rain < 0.0f || rain > 1.0f) { a3_strbuf_free(&roads); a3_world_destroy(w); return fail("Use --rain between 0 and 1.", "bad rain '%s'", opt(a, "rain", "")); }
+        a3_weather_set(w, rain);
+    }
     i32 cars = atoi(opt(a, "cars", "40")), peds = atoi(opt(a, "pedestrians", "60"));
     if (!has_opt(a, "no-traffic") && (cars > 0 || peds > 0)) {
         A3Entity te = a3_entity_create(w, "City Traffic");
@@ -1360,7 +1366,7 @@ static const Cmd g_cmds[] = {
     { "simulate", 0, c_simulate, "simulate <project> [--scene S] [--frames 120] [--dt 0.0166] [--keys space@10-20,w@0-60] [--watch A,B] [--trace N]", "Plays the game headless (no window) and reports object states, script errors and HUD text." },
     { "screenshot", 0, c_screenshot, "screenshot <project> [--scene S] [--frames 30] [--size 1280x720] [--camera x,y,z --look x,y,z] [--out file.png] [--record dir [--record-from N]]", "Plays for some frames in a hidden window and saves an image (needs OpenGL). --record saves every frame of the game camera (with HUD) as frame_00000.png... for videos." },
     { "serve", 0, 0, "serve [folder] [--port 8080] [--open]", "Serves the browser editor (build/web) on http://localhost:8080 until Ctrl+C. Prints one JSON line when listening." },
-    { "world", "city", c_world_city, "world city <project> [--scene Assets/Scenes/City.a3scene] [--seed 1] [--time day|sunset|night] [--density 1] [--no-lights] [--no-neon] [--cars 40] [--pedestrians 60] [--no-traffic] [--startup] [--all]", "Generates Sol Harbor, a coastal city (towers, Art Deco beachfront, causeways, port) plus its road graph in Assets/City/roads.json." },
+    { "world", "city", c_world_city, "world city <project> [--scene Assets/Scenes/City.a3scene] [--seed 1] [--time day|sunset|night] [--rain 0.8] [--density 1] [--no-lights] [--no-neon] [--cars 40] [--pedestrians 60] [--no-traffic] [--startup] [--all]", "Generates Sol Harbor, a coastal city (towers, Art Deco beachfront, causeways, port) plus its road graph in Assets/City/roads.json." },
     { "mesh", "new", c_mesh_new, "mesh new <cube|plane|grid|cylinder|sphere|cone|torus> --out file.obj [--size 1] [--segments 16] [--rings 8] [--smooth]", "Creates a model with the modeling kernels." },
     { "mesh", "info", c_mesh_info, "mesh info <file.obj>", "Vertex, edge, face counts, bounds and whether the mesh is closed." },
     { "mesh", "edit", c_mesh_edit, "mesh edit <in.obj> --out <out.obj> --op <operation> [op options]...", "Applies modeling operations in order (see 'mesh ops')." },

@@ -11,6 +11,7 @@
 #include "../world/a3_procmeshes.h"
 #include "a3_vehicle_kernels.h"
 #include "../audio/a3_audio.h"
+#include "../world/a3_weather.h"
 
 u32 A3_T_VEHICLE = 0xFFFFFFFFu;
 
@@ -618,7 +619,7 @@ static void sim_step_cars(A3World *w, const A3Entity *ents, u32 count, f32 dt) {
         sc->c = 2.0f * 0.38f * a3_sqrtf(sc->k * sc->m * 0.25f);
         sc->L = sim_travel(v);
         sc->wr = a3_maxf(v->wheel_radius, 0.1f);
-        sc->mu = 0.6f + 0.6f * a3_clampf(v->grip, 0, 1);
+        sc->mu = (0.6f + 0.6f * a3_clampf(v->grip, 0, 1)) * a3_weather_grip(a3_world_settings(w)->wetness);   /* wet roads grip less */
         /* weight distribution by layout: front-drive cars are nose heavy, rear-drive close to 50/50 */
         sc->front_share = v->drive == A3_DRIVE_FRONT ? 0.62f : v->drive == A3_DRIVE_ALL ? 0.56f : 0.52f;
         sc->cg_fwd = (sc->front_share - 0.5f) * a3_maxf(v->wheelbase, 0.5f);

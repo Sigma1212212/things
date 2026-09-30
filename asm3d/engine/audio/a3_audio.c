@@ -398,7 +398,7 @@ b32 a3_wav_encode(const f32 *samples, u32 frames, u32 channels, u32 rate, u8 **o
 /* ======================================================================== */
 
 const char *const a3_builtin_sound_names[A3_SOUND_COUNT] = {
-    "none", "jump", "coin", "hit", "explosion", "laser", "click", "footstep", "powerup", "hurt", "wind", "engine", "beep", "skid",
+    "none", "jump", "coin", "hit", "explosion", "laser", "click", "footstep", "powerup", "hurt", "wind", "engine", "beep", "skid", "rain",
 };
 
 enum { W_SQUARE = 0, W_SAW, W_SINE, W_NOISE, W_TRIANGLE };
@@ -428,6 +428,7 @@ static const Synth g_synth[A3_SOUND_COUNT] = {
     [A3_SOUND_ENGINE] = { W_SAW, 60, 60, 0.0f, 1.0f, 0.0f, 0.5f, 0.03f, 6, 0, 1, 0.15f, 0.5f, 11 },
     [A3_SOUND_BEEP] = { W_SQUARE, 880, 880, 0.005f, 0.10f, 0.05f, 0.5f, 0, 0, 0, 1, 1, 0.3f, 12 },
     [A3_SOUND_SKID] = { W_NOISE, 1000, 1000, 0.0f, 1.0f, 0.0f, 0.5f, 0, 0, 0, 1, 1, 0.4f, 13 },   /* see synth_skid */
+    [A3_SOUND_RAIN] = { W_NOISE, 1000, 1000, 0.0f, 1.0f, 0.0f, 0.5f, 0, 0, 0, 1, 1, 0.4f, 14 },   /* see synth_rain */
 };
 
 /* two-pole resonator (band-pass) */
@@ -482,6 +483,41 @@ static f32 *synth_engine(u32 rate, u32 *out_frames) {
 /* Tire squeal: two tones (integer Hz, so a 1 s loop is seamless) with a
  * slow wobble plus band-limited noise; the noise tail is cross-faded into
  * the head. */
+/* Rain: a bed of soft filtered noise (distant rain) plus thousands of tiny
+ * droplet ticks, each a short resonant click at a random pitch. The tail is
+ * cross-faded into the head for a seamless 2 s loop. */
+static f32 *synth_rain(u32 rate, u32 *out_frames) {
+    u32 fade = rate / 4, n = rate * 2 + fade;
+    f32 *s = (f32 *)a3_malloc(sizeof(f32) * n, A3_MEM_AUDIO);
+    if (!s) return 0;
+    A3Rng rng;
+    a3_rng_seed(&rng, 2024, 11);
+    Reso bed;
+    reso_init(&bed, 2600.0f, 3500.0f, rate);
+    f32 lp = 0, peak = 0;
+    for (u32 i = 0; i < n; ++i) {
+        f32 x = a3_rng_f32(&rng) * 2.0f - 1.0f;
+        lp += 0.25f * (x - lp);
+        s[i] = reso_step(&bed, lp) * 0.02f + lp * 0.25f;
+    }
+    u32 drops = n / 30;
+    for (u32 d = 0; d < drops; ++d) {
+        u32 at = a3_rng_range_u32(&rng, n);
+        f32 freq = a3_rng_range_f32(&rng, 1800.0f, 7000.0f), amp = a3_rng_range_f32(&rng, 0.05f, 0.6f);
+        amp *= amp;
+        Reso tick;
+        reso_init(&tick, freq, freq * 0.25f, rate);
+        u32 len = rate / 120;
+        for (u32 k = 0; k < len && at + k < n; ++k) s[at + k] += reso_step(&tick, k == 0 ? amp : 0.0f) * 0.08f;
+    }
+    for (u32 i = 0; i < fade; ++i) { f32 k = (f32)i / (f32)fade; s[i] = s[i] * k + s[n - fade + i] * (1.0f - k); }
+    n -= fade;
+    for (u32 i = 0; i < n; ++i) peak = a3_maxf(peak, a3_absf(s[i]));
+    if (peak > 0) for (u32 i = 0; i < n; ++i) s[i] *= 0.55f / peak;
+    *out_frames = n;
+    return s;
+}
+
 static f32 *synth_skid(u32 rate, u32 *out_frames) {
     u32 fade = rate / 8, n = rate + fade;
     f32 *s = (f32 *)a3_malloc(sizeof(f32) * n, A3_MEM_AUDIO);
@@ -512,6 +548,7 @@ f32 *a3_audio_synth(u32 sound, u32 rate, u32 *out_frames) {
     if (sound == 0 || sound >= A3_SOUND_COUNT || !rate) return 0;
     if (sound == A3_SOUND_ENGINE) return synth_engine(rate, out_frames);
     if (sound == A3_SOUND_SKID) return synth_skid(rate, out_frames);
+    if (sound == A3_SOUND_RAIN) return synth_rain(rate, out_frames);
     const Synth *p = &g_synth[sound];
     f32 total = p->attack + p->sustain + p->decay;
     u32 n = (u32)(total * (f32)rate);
@@ -664,7 +701,7 @@ void a3_audio_stop_world(A3World *w) {
 }
 
 static const char *const g_builtin_labels[A3_SOUND_COUNT] = {
-    "None (use Clip)", "Jump", "Coin", "Hit", "Explosion", "Laser", "Click", "Footstep", "Power Up", "Hurt", "Wind (loop)", "Engine (loop)", "Beep", "Tire Skid (loop)",
+    "None (use Clip)", "Jump", "Coin", "Hit", "Explosion", "Laser", "Click", "Footstep", "Power Up", "Hurt", "Wind (loop)", "Engine (loop)", "Beep", "Tire Skid (loop)", "Rain (loop)",
 };
 
 void a3_audio_register(void) {

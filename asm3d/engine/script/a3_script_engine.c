@@ -5,6 +5,7 @@
 #include "../physics/a3_vehicle.h"
 #include "../world/a3_traffic.h"
 #include "../world/a3_citygen.h"
+#include "../world/a3_weather.h"
 #include "a3_script_engine.h"
 #include "a3_script_internal.h"
 #include "../scene/a3_components.h"
@@ -865,6 +866,15 @@ NATIVE(n_city_time) {
     return 1;
 }
 
+NATIVE(n_weather) {
+    (void)n; WORLD_OR_FAIL();
+    f64 rain;
+    if (!a3s_arg_num(vm, a, 0, &rain)) return 0;
+    a3_weather_set(w, (f32)rain);
+    *r = a3s_nil();
+    return 1;
+}
+
 /* ---- sound, particles, animation ---- */
 
 NATIVE(n_play_sound) {
@@ -1143,6 +1153,7 @@ static void register_natives(void) {
         { "road_point", n_road_point, 0, 3, "City", "road_point(center, min_distance, max_distance)", "A random point on a road of the city, between the distances from center (nil without roads)." },
         { "nearest_road", n_nearest_road, 1, 1, "City", "nearest_road(position)", "[point, direction] of the closest road center line, or nil." },
         { "city_time", n_city_time, 1, 1, "City", "city_time(\"night\")", "Changes the sky, sun and look to \"day\", \"sunset\" or \"night\"." },
+        { "weather", n_weather, 1, 1, "City", "weather(0.8)", "Rain from 0 (dry) to 1 (downpour): wet streets and puddles, rain clouds, lightning in heavy rain, less tire grip." },
         { "play_sound", n_play_sound, 1, 3, "Game", "play_sound(sound, volume, pitch)", "Plays a .wav file or a built-in sound such as \"coin\" or \"jump\"." },
         { "burst", n_burst, 1, 1, "Game", "burst(obj)", "Restarts the ParticleEmitter of an object (great with the Explosion preset)." },
         { "play_animation", n_play_animation, 1, 1, "Game", "play_animation(obj)", "Plays the Animator of an object from the start." },

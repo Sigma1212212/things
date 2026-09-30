@@ -9,6 +9,7 @@
 #include "../engine/world/a3_traffic.h"
 #include "../engine/physics/a3_vehicle.h"
 #include "../engine/physics/a3_vehicle_kernels.h"
+#include "../engine/world/a3_weather.h"
 #include "../engine/scene/a3_components.h"
 #include "../engine/physics/a3_physics.h"
 #include "../engine/resource/a3_assets.h"
@@ -331,4 +332,47 @@ A3_TEST(vehicle_wheel_kernel_bit_exact) {
         A3_CHECK(a3_absf(sn[i] - a3_sinf(in[i])) < 1e-4f);
     }
     A3_CHECK(a3_strlen(a3_vk_backend()) > 0);
+}
+
+/* distance a realistic car needs to stop from ~20 m/s */
+static f32 braking_distance(f32 wetness) {
+    A3World *w = a3_world_create("brake");
+    ground_box(w, "Ground", a3_v3(0, -0.5f, 0), a3_v3(3000, 1, 3000));
+    a3_world_settings(w)->wetness = wetness;
+    A3Entity car = a3_vehicle_spawn_car(w, "Car", a3_v3(0, 0, 0), 0, a3_v4(1, 1, 1, 1));
+    A3CVehicle *v = (A3CVehicle *)a3_component_get(w, car, A3_T_VEHICLE);
+    v->throttle = 1;
+    for (u32 i = 0; i < 900 && v->speed < 20.0f; ++i) step_world(w, 1);
+    A3Vec3 start = a3_transform(w, car)->position;
+    v->throttle = -1;
+    for (u32 i = 0; i < 900 && v->speed > 0.3f; ++i) step_world(w, 1);
+    f32 d = a3_v3_len(a3_v3_sub(a3_transform(w, car)->position, start));
+    a3_world_destroy(w);
+    return d;
+}
+
+A3_TEST(world_weather_rain) {
+    setup();
+    A3World *w = a3_world_create("weather");
+    a3_weather_set(w, 0.8f);
+    A3CWorldSettings *ws = a3_world_settings(w);
+    A3_CHECK(ws->rain == 0.8f && ws->wetness > 0.9f && ws->cloud_cover >= 0.9f);
+    a3_weather_set(w, 0.0f);
+    A3_CHECK(ws->rain == 0.0f && ws->wetness == 0.0f);
+    a3_world_destroy(w);
+    /* lightning: only in heavy rain, deterministic, some flashes within a minute */
+    f32 flashes = 0, light = 0;
+    for (u32 i = 0; i < 60 * 60; ++i) {
+        f64 t = i / 60.0;
+        flashes = a3_maxf(flashes, a3_weather_lightning(t, 0.9f));
+        light = a3_maxf(light, a3_weather_lightning(t, 0.3f));
+        A3_CHECK(a3_weather_lightning(t, 0.9f) == a3_weather_lightning(t, 0.9f));
+    }
+    A3_CHECK(flashes > 0.5f && light == 0.0f);
+    A3_CHECK(a3_weather_sun_factor(0.0f) == 1.0f && a3_weather_sun_factor(1.0f) < 0.2f);
+    A3_CHECK(a3_weather_grip(1.0f) < a3_weather_grip(0.0f));
+    /* wet roads: the realistic car needs clearly longer to stop */
+    f32 dry = braking_distance(0.0f), wet = braking_distance(1.0f);
+    A3_CHECK_MSG(dry > 10.0f && dry < 40.0f, "dry braking distance %.1f m", dry);
+    A3_CHECK_MSG(wet > dry * 1.2f, "wet braking %.1f m vs dry %.1f m", wet, dry);
 }

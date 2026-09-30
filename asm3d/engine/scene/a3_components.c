@@ -150,6 +150,8 @@ void a3_register_core_components(void) {
     a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, cloud_cover, A3_FIELD_F32, "Clouds", "Procedural cloud layer drifting with the wind. 0 = clear sky."), 0, 1, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
     a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, auto_exposure, A3_FIELD_F32, "Auto Exposure", "Eye adaptation: the image brightens in dark places and darkens toward a bright sky, over a second or two. 0 = fixed exposure."), 0, 1, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
     a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, light_shafts, A3_FIELD_F32, "Light Shafts", "Rays of sunlight through gaps between buildings and trees when looking toward the sun."), 0, 2, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, rain, A3_FIELD_F32, "Rain", "Rain streaks, ripples in puddles, rain clouds over the sun, lightning in heavy rain and the sound of rain."), 0, 1, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
+    a3_field_range(A3_REFLECT_FIELD(t, A3CWorldSettings, wetness, A3_FIELD_F32, "Wetness", "Wet ground: darker, glossy surfaces and puddles that reflect lights. Tires grip less."), 0, 1, 0.01f)->flags |= A3_FIELD_FLAG_SLIDER;
 }
 
 /* ---- Transform system ---- */
