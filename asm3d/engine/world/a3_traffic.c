@@ -348,7 +348,7 @@ static void spawn_all(A3World *w, A3CTraffic *tr, GraphCache *gc, A3Entity manag
 /* Driving                                                                  */
 /* ======================================================================== */
 
-typedef struct Obstacle { A3Vec3 p; A3Entity e; f32 radius; } Obstacle;
+typedef struct Obstacle { A3Vec3 p; A3Entity e; f32 radius; A3Vec3 vel; } Obstacle;   /* vel: vehicles only */
 
 static A3Vec2 lane_point(const A3RoadGraph *g, u32 a, u32 b, f32 lane, f32 s) {
     A3Vec2 d = edge_dir(g, a, b), r = right_of(d);
@@ -442,9 +442,39 @@ static void drive_car(A3World *w, const A3RoadGraph *g, A3Rng *rng, A3Entity e, 
     } else ag->wait = 0;
 }
 
-static void walk_ped(A3World *w, const A3RoadGraph *g, A3Rng *rng, A3Entity e, A3CTrafficAgent *ag, f32 dt) {
+/* A car that will pass within ~2.5 m in the next 1.5 s: returns the direction
+ * to jump out of its way (away from its path). */
+static b32 ped_threat(A3Vec3 p, const Obstacle *obs, u32 nobs, A3Vec2 *away) {
+    for (u32 i = 0; i < nobs; ++i) {
+        A3Vec2 v = a3_v2(obs[i].vel.x, obs[i].vel.z);
+        f32 v2 = v.x * v.x + v.y * v.y;
+        if (v2 < 16.0f) continue;                                  /* slower than ~15 km/h: no panic */
+        A3Vec2 rel = a3_v2(p.x - obs[i].p.x, p.z - obs[i].p.z);
+        f32 ahead = rel.x * v.x + rel.y * v.y;
+        if (ahead <= 0) continue;                                  /* behind the car */
+        f32 tca = a3_minf(ahead / v2, 1.5f);
+        A3Vec2 cl = a3_v2(rel.x - v.x * tca, rel.y - v.y * tca);
+        f32 d = a3_sqrtf(cl.x * cl.x + cl.y * cl.y);
+        if (d > 2.6f) continue;
+        f32 vl = a3_sqrtf(v2);
+        *away = d > 0.2f ? a3_v2(cl.x / d, cl.y / d) : a3_v2(-v.y / vl, v.x / vl);
+        return 1;
+    }
+    return 0;
+}
+
+static void walk_ped(A3World *w, const A3RoadGraph *g, A3Rng *rng, A3Entity e, A3CTrafficAgent *ag, const Obstacle *obs, u32 nobs, f32 dt) {
     A3CTransform *t = a3_transform(w, e);
     if (!t || (u32)ag->from >= g->node_count || (u32)ag->to >= g->node_count || (u32)ag->next >= g->node_count) return;
+    A3Vec2 away;
+    if (ped_threat(t->position, obs, nobs, &away)) {
+        /* run sideways out of the car's path (the Person body switches to a run) */
+        t->position.x += away.x * 5.5f * dt;
+        t->position.z += away.y * 5.5f * dt;
+        t->rotation = a3_quat_slerp(t->rotation, a3_quat_axis_angle(a3_v3(0, 1, 0), a3_atan2f(-away.x, -away.y)), a3_minf(1.0f, dt * 12.0f));
+        t->position.y = g->walk_y;
+        return;
+    }
     u32 a = (u32)ag->from, b = (u32)ag->to, c = (u32)ag->next;
     f32 len = edge_len(g, a, b);
     f32 corner = a3_absf(ag->lane);
@@ -491,13 +521,17 @@ void a3_traffic_update(A3World *w, f32 dt, f64 time) {
         Obstacle *obs = A3_NEW_ARRAY(Obstacle, nv + na + nc + 1, A3_MEM_TEMP);
         if (!obs) continue;
         u32 no = 0;
-        for (u32 i = 0; i < nv; ++i) { A3CTransform *t = a3_transform(w, vents[i]); if (t) { obs[no].p = t->position; obs[no].e = vents[i]; obs[no].radius = 1.0f; no++; } }
+        for (u32 i = 0; i < nv; ++i) {
+            A3CTransform *t = a3_transform(w, vents[i]);
+            const A3CVehicle *vv = (const A3CVehicle *)a3_component_get(w, vents[i], A3_T_VEHICLE);
+            if (t) { obs[no].p = t->position; obs[no].e = vents[i]; obs[no].radius = 1.0f; obs[no].vel = vv ? vv->velocity : a3_v3_zero(); no++; }
+        }
         for (u32 i = 0; i < na; ++i) {
             A3CTrafficAgent *ag = (A3CTrafficAgent *)a3_component_get(w, aents[i], A3_T_TRAFFIC_AGENT);
             A3CTransform *t = a3_transform(w, aents[i]);
-            if (ag && ag->kind == KIND_PED && t) { obs[no].p = t->position; obs[no].e = aents[i]; obs[no].radius = 0.4f; no++; }
+            if (ag && ag->kind == KIND_PED && t) { obs[no].p = t->position; obs[no].e = aents[i]; obs[no].radius = 0.4f; obs[no].vel = a3_v3_zero(); no++; }
         }
-        for (u32 i = 0; i < nc; ++i) { if (!a3_entity_active(w, cents[i])) continue; obs[no].p = a3_transform_world_position(w, cents[i]); obs[no].e = cents[i]; obs[no].radius = 0.4f; no++; }
+        for (u32 i = 0; i < nc; ++i) { if (!a3_entity_active(w, cents[i])) continue; obs[no].p = a3_transform_world_position(w, cents[i]); obs[no].e = cents[i]; obs[no].radius = 0.4f; obs[no].vel = a3_v3_zero(); no++; }
         A3Rng *rng = &gc->rng;
         for (u32 i = 0; i < na; ++i) {
             A3Entity e = aents[i];
@@ -508,7 +542,7 @@ void a3_traffic_update(A3World *w, f32 dt, f64 time) {
                 A3CVehicle *v = (A3CVehicle *)a3_component_get(w, e, A3_T_VEHICLE);
                 if (v && !v->use_input) drive_car(w, &gc->g, rng, e, ag, v, tr, obs, no, dt, time);
             } else {
-                walk_ped(w, &gc->g, rng, e, ag, dt);
+                walk_ped(w, &gc->g, rng, e, ag, obs, no, dt);
             }
         }
         a3_free(obs);

@@ -378,3 +378,42 @@ A3_TEST(world_weather_rain) {
     A3_CHECK_MSG(dry > 10.0f && dry < 40.0f, "dry braking distance %.1f m", dry);
     A3_CHECK_MSG(wet > dry * 1.2f, "wet braking %.1f m vs dry %.1f m", wet, dry);
 }
+
+A3_TEST(world_pedestrians_dodge_cars) {
+    setup();
+    a3_traffic_register();
+    A3World *w = a3_world_create("dodge");
+    A3Entity ce = a3_entity_create(w, "City");
+    a3_component_add(w, ce, A3_T_TRANSFORM);
+    A3CCity *city = (A3CCity *)a3_component_add(w, ce, A3_T_CITY);
+    city->density = 0.2f;
+    city->street_lights = 0;
+    A3Entity te = a3_entity_create(w, "Traffic");
+    a3_component_add(w, te, A3_T_TRANSFORM);
+    A3CTraffic *tr = (A3CTraffic *)a3_component_add(w, te, A3_T_TRAFFIC);
+    a3_strcpy(tr->roads, sizeof(tr->roads), "generated");
+    tr->cars = 0;
+    tr->pedestrians = 4;
+    step_world(w, 2);
+    A3Entity ped = a3_entity_find_by_name(w, "Pedestrian");
+    A3_CHECK(a3_entity_valid(w, ped));
+    if (!a3_entity_valid(w, ped)) { a3_world_destroy(w); return; }
+    A3Vec3 p0 = a3_transform(w, ped)->position;
+    /* an arcade car 9 m away, driving straight at the pedestrian at 15 m/s */
+    A3Entity car = a3_vehicle_spawn_car(w, "Speeder", a3_v3(p0.x, p0.y, p0.z + 9.0f), 0, a3_v4(1, 1, 1, 1));
+    A3CVehicle *v = (A3CVehicle *)a3_component_get(w, car, A3_T_VEHICLE);
+    v->physics_model = A3_VEHICLE_ARCADE;
+    v->ground_probe = 0;
+    v->collide_world = 0;
+    v->initialized = 1;
+    v->yaw = 0;
+    v->speed = 15.0f;
+    v->velocity = a3_v3(0, 0, -15.0f);
+    v->last_position = a3_transform(w, car)->position;
+    v->throttle = 1;
+    step_world(w, 18);                       /* 0.3 s */
+    A3Vec3 p1 = a3_transform(w, ped)->position;
+    f32 side = a3_absf(p1.x - p0.x);         /* the car drives along -Z at x = p0.x */
+    A3_CHECK_MSG(side > 0.9f, "pedestrian only moved %.2f m out of the car's path", side);
+    a3_world_destroy(w);
+}
