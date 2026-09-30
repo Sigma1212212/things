@@ -15,34 +15,80 @@
 #define NIGHT "float a3_night() { return 1.0 - smoothstep(0.08, 0.9, dot(u_sun_color, vec3(0.3333))); }\n"
 #define H2 "float a3_h2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n"
 
+/* Interior mapping: a ray from the camera through the window is intersected
+ * with a virtual room box behind the facade (back wall, side walls, floor,
+ * ceiling), so windows show rooms with depth and parallax instead of a flat
+ * texture. f = position in the facade cell (0..1), t = facade tangent,
+ * n = outward normal, size = cell width / height (m), depth = room depth (m). */
+#define ROOM \
+"vec3 a3_room(vec2 f, vec3 t, vec3 n, vec3 v, vec2 size, float depth, float seed, float light, float day) {\n" \
+"    vec3 rd = -v;\n" \
+"    vec3 d = vec3(dot(rd, t) / size.x, rd.y / size.y, max(dot(rd, -n), 0.05) / depth);\n" \
+"    vec3 p = vec3(f, 0.0);\n" \
+"    vec3 st = step(0.0, d);\n" \
+"    vec3 tt = (st - p) / (mix(vec3(-1.0), vec3(1.0), st) * max(abs(d), vec3(1e-5)));\n" \
+"    float tm = min(tt.x, min(tt.y, tt.z));\n" \
+"    vec3 h = p + d * tm;\n" \
+"    float hs = fract(sin(seed * 91.7) * 4375.5);\n" \
+"    vec3 wallc = hs < 0.3 ? vec3(0.82, 0.78, 0.7) : hs < 0.55 ? vec3(0.7, 0.74, 0.78) : hs < 0.8 ? vec3(0.86, 0.84, 0.8) : vec3(0.75, 0.6, 0.5);\n" \
+"    vec3 c;\n" \
+"    if (tm == tt.z) {\n" \
+"        c = wallc;\n" \
+"        float pic = step(abs(h.x - 0.3 - hs * 0.4), 0.12) * step(abs(h.y - 0.6), 0.1);\n" \
+"        c = mix(c, vec3(0.3 + hs * 0.5, 0.35, 0.5 - hs * 0.3), pic * step(0.4, hs));\n" \
+"        float desk = step(h.y, 0.26) * step(abs(h.x - 0.5 + (hs - 0.5) * 0.4), 0.28);\n" \
+"        c = mix(c, vec3(0.25, 0.18, 0.12), desk);\n" \
+"    } else if (tm == tt.y) {\n" \
+"        if (d.y < 0.0) c = (hs < 0.5 ? vec3(0.42, 0.3, 0.2) : vec3(0.35, 0.36, 0.38)) * (0.85 + 0.15 * step(0.5, fract(h.x * 6.0)));\n" \
+"        else c = vec3(0.9) + light * 2.5 * step(abs(h.x - 0.5), 0.18) * step(abs(h.z - 0.5), 0.12);\n" \
+"    } else {\n" \
+"        c = wallc * 0.8;\n" \
+"        float shelf = step(0.6, fract(seed * 13.1)) * step(h.z, 0.5) * step(h.y, 0.7);\n" \
+"        c = mix(c, vec3(0.3, 0.22, 0.15), shelf);\n" \
+"    }\n" \
+"    float lamp = light * (0.55 + 0.45 * h.y) * (1.0 - 0.35 * h.z);\n" \
+"    float amb = day * (1.0 - 0.6 * h.z);\n" \
+"    return c * (lamp + amb);\n" \
+"}\n"
+
 typedef struct BuiltinMaterial { const char *name; const char *doc; const char *code; } BuiltinMaterial;
 
 static const BuiltinMaterial g_builtins[] = {
-    { "building", "Office / apartment facade: floors every 3.5 m, lit windows at night, flat roof. Base Color = wall color.",
-      NIGHT H2
+    { "building", "Office / apartment facade: floors every 3.5 m, recessed windows with rooms behind them (interior mapping), blinds, lit at night, flat roof. Base Color = wall color.",
+      NIGHT H2 ROOM
       "void a3_surface(inout A3Surface s) {\n"
       "    vec3 n = normalize(s.normal);\n"
-      "    vec3 wall = s.color.rgb * (0.9 + 0.2 * a3_noise(s.world_pos * 0.7));\n"
+      "    vec3 wall = s.color.rgb * (0.88 + 0.2 * a3_noise(s.world_pos * 0.7) + 0.06 * a3_noise(s.world_pos * 6.0));\n"
       "    if (abs(n.y) > 0.6) { s.albedo = vec3(0.32, 0.31, 0.30) * (0.8 + 0.4 * a3_noise(s.world_pos * 2.0)); s.roughness = 0.95; return; }\n"
       "    vec3 t = normalize(cross(vec3(0.0, 1.0, 0.0), n));\n"
       "    float u = dot(s.world_pos, t), y = s.world_pos.y;\n"
       "    vec2 cell = vec2(floor(u / 3.0), floor(y / 3.5));\n"
       "    vec2 f = vec2(fract(u / 3.0), fract(y / 3.5));\n"
       "    float win = step(0.18, f.x) * step(f.x, 0.82) * step(0.25, f.y) * step(f.y, 0.85) * step(1.0, y);\n"
+      "    float frame = win * (1.0 - step(0.2, f.x) * step(f.x, 0.8) * step(0.27, f.y) * step(f.y, 0.83));\n"
+      "    float mid = win * step(abs(f.x - 0.5), 0.008);\n"
       "    float night = a3_night();\n"
-      "    float rnd = a3_h2(cell + floor(s.world_pos.xz / 40.0) * 7.31);\n"
-      "    float lit = step(0.62, rnd) * (0.35 + 0.65 * a3_h2(cell * 3.3 + 1.7));\n"       /* ~40% lit, varied brightness */
-      "    vec3 glass = vec3(0.05, 0.07, 0.09);\n"
+      "    float seed = a3_h2(cell + floor(s.world_pos.xz / 40.0) * 7.31);\n"
+      "    float lit = step(0.62, seed) * (0.35 + 0.65 * a3_h2(cell * 3.3 + 1.7));\n"
       "    float kind = a3_h2(cell * 1.7);\n"
       "    vec3 warm = kind < 0.6 ? vec3(1.0, 0.68, 0.38) : kind < 0.85 ? vec3(0.95, 0.85, 0.7) : vec3(0.6, 0.75, 1.0);\n"
-      "    warm *= 0.8 + 0.2 * step(0.5, fract(u / 1.5)) * step(0.5, f.y);\n"                 /* hint of curtains */
-      "    s.albedo = mix(wall, glass, win);\n"
-      "    s.roughness = mix(0.85, 0.12, win);\n"
-      "    s.metallic = mix(0.0, 0.4, win);\n"
-      "    s.emissive = warm * win * lit * night * 1.25;\n"
+      "    float day = clamp(dot(u_sun_color, vec3(0.3333)) * 0.05, 0.0, 0.2) + 0.012;\n"
+      "    vec3 room = a3_room(f, t, n, s.view_dir, vec2(3.0, 3.5), 5.0, seed * 17.0 + kind, lit * night * 1.4, day) * mix(vec3(1.0), warm, lit * night);\n"
+      "    float blind = step(1.0 - a3_h2(cell * 5.1) * 0.7, 1.0 - (f.y - 0.27) / 0.56) * step(0.45, a3_h2(cell * 2.3));\n"
+      "    vec3 blinds = mix(vec3(0.75, 0.72, 0.66), vec3(0.55, 0.52, 0.48), step(0.5, fract(y * 12.0))) * (day * 4.0 + lit * night * 0.8 * warm);\n"
+      "    room = mix(room, blinds, blind);\n"
+      /* window reveal: the wall around the opening is lit from above, the sill catches light */
+      "    float sill = step(abs(f.y - 0.235), 0.015) * step(0.16, f.x) * step(f.x, 0.84);\n"
+      "    float glass = win * (1.0 - frame) * (1.0 - mid);\n"
+      "    s.albedo = mix(mix(wall, wall * 1.2, sill), vec3(0.02, 0.025, 0.03), glass);\n"
+      "    s.albedo = mix(s.albedo, vec3(0.18, 0.18, 0.2), max(frame, mid));\n"
+      "    s.roughness = mix(0.85, 0.05, glass);\n"
+      "    s.metallic = mix(0.0, 0.25, glass);\n"
+      "    if (sill > 0.5) s.normal = normalize(n + vec3(0.0, 0.8, 0.0));\n"
+      "    s.emissive = room * glass;\n"
       "}\n" },
-    { "artdeco", "Pastel Art Deco hotel: horizontal eyebrow ledges, porthole-style windows and neon trim that glows at night. Base Color = pastel wall.",
-      NIGHT H2
+    { "artdeco", "Pastel Art Deco hotel: horizontal eyebrow ledges, windows with rooms behind them (interior mapping) and neon trim that glows at night. Base Color = pastel wall.",
+      NIGHT H2 ROOM
       "void a3_surface(inout A3Surface s) {\n"
       "    vec3 n = normalize(s.normal);\n"
       "    float night = a3_night();\n"
@@ -60,12 +106,16 @@ static const BuiltinMaterial g_builtins[] = {
       "    float trim = smoothstep(0.012, 0.0, abs(h - 0.94)) + smoothstep(0.01, 0.0, abs(h - 0.25)) * 0.8;\n"
       "    float hue = a3_h2(floor(s.world_pos.xz / 25.0));\n"
       "    vec3 neon = hue < 0.33 ? vec3(1.0, 0.15, 0.6) : hue < 0.66 ? vec3(0.1, 0.9, 1.0) : vec3(0.6, 0.2, 1.0);\n"
-      "    s.albedo = mix(mix(wall, wall * 1.15, ledge), vec3(0.04, 0.06, 0.08), win);\n"
-      "    s.roughness = mix(0.8, 0.15, win);\n"
-      "    s.emissive = vec3(1.0, 0.75, 0.5) * win * lit * night * 1.1 + neon * trim * (0.3 + 3.2 * night);\n"
+      "    float day = clamp(dot(u_sun_color, vec3(0.3333)) * 0.05, 0.0, 0.2) + 0.012;\n"
+      "    vec3 room = a3_room(f, t, n, s.view_dir, vec2(2.4, 3.2), 4.5, a3_h2(cell * 4.1) * 13.0, lit * night * 1.3, day) * mix(vec3(1.0), vec3(1.0, 0.75, 0.5), lit * night);\n"
+      "    if (ledge > 0.5) s.normal = normalize(n + vec3(0.0, 0.9, 0.0));\n"
+      "    s.albedo = mix(mix(wall, wall * 1.15, ledge), vec3(0.03, 0.04, 0.05), win);\n"
+      "    s.roughness = mix(0.8, 0.06, win);\n"
+      "    s.metallic = mix(0.0, 0.2, win);\n"
+      "    s.emissive = room * win + neon * trim * (0.3 + 3.2 * night);\n"
       "}\n" },
-    { "tower", "Glass skyscraper: reflective curtain wall with mullions, some offices lit at night, red beacon on top. Base Color = glass tint.",
-      NIGHT H2
+    { "tower", "Glass skyscraper: reflective curtain wall with mullions, offices behind the glass (interior mapping, lit at night), red beacon on top. Base Color = glass tint.",
+      NIGHT H2 ROOM
       "void a3_surface(inout A3Surface s) {\n"
       "    vec3 n = normalize(s.normal);\n"
       "    float night = a3_night();\n"
@@ -82,7 +132,10 @@ static const BuiltinMaterial g_builtins[] = {
       "    s.metallic = mix(0.85, 0.6, mull);\n"
       "    s.roughness = mix(0.06, 0.35, mull);\n"
       "    vec3 office = mix(vec3(0.75, 0.85, 1.0), vec3(1.0, 0.8, 0.55), step(0.7, a3_h2(cell * 0.37)));\n"
-      "    s.emissive = office * (1.0 - mull) * lit * night * 0.6;\n"
+      "    float day = clamp(dot(u_sun_color, vec3(0.3333)) * 0.008, 0.0, 0.03) + 0.004;\n"
+      "    vec2 rf = vec2(fract(u / 3.2), f.y);\n"
+      "    vec3 inside = a3_room(rf, t, n, s.view_dir, vec2(3.2, 3.8), 8.0, room * 29.0, lit * night * 0.4, day) * mix(vec3(1.0), office, lit * night);\n"
+      "    s.emissive = inside * (1.0 - mull);\n"
       "}\n" },
     { "road", "Asphalt with lane markings, crosswalks at the ends and wet patches that reflect lights. Roads run along their local Z axis (scale X = width); Metallic 1 = plain asphalt (intersections).",
       NIGHT H2
@@ -112,8 +165,10 @@ static const BuiltinMaterial g_builtins[] = {
       "void a3_surface(inout A3Surface s) {\n"
       "    vec2 f = fract(s.world_pos.xz / 1.5);\n"
       "    float joint = 1.0 - step(0.03, f.x) * step(0.03, f.y);\n"
-      "    s.albedo = s.color.rgb * (0.85 + 0.25 * a3_noise(s.world_pos * 3.0)) * (1.0 - joint * 0.35);\n"
-      "    s.roughness = 0.75;\n"
+      "    float stain = smoothstep(0.45, 0.75, a3_fbm(s.world_pos * 0.35)) * 0.25 + smoothstep(0.6, 0.8, a3_noise(s.world_pos * 1.3)) * 0.12;\n"
+      "    float slab = 0.94 + 0.12 * a3_h2(floor(s.world_pos.xz / 1.5));\n"
+      "    s.albedo = s.color.rgb * slab * (0.85 + 0.2 * a3_noise(s.world_pos * 3.0) + 0.08 * a3_noise(s.world_pos * 17.0)) * (1.0 - joint * 0.4) * (1.0 - stain);\n"
+      "    s.roughness = 0.8;\n"
       "}\n" },
     { "sand", "Beach sand with ripples. Base Color = sand tint.",
       "void a3_surface(inout A3Surface s) {\n"

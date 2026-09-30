@@ -142,8 +142,8 @@ A3Renderer *a3_renderer_create(void) {
     A3Renderer *r = A3_NEW(A3Renderer, A3_MEM_RENDER);
     if (!r) return 0;
     r->settings.shadows = 1;
-    r->settings.shadow_map_size = 2048;
-    r->settings.shadow_distance = 60.0f;
+    r->settings.shadow_map_size = 4096;
+    r->settings.shadow_distance = 160.0f;
     r->settings.fxaa = 1;
     r->settings.vignette = 0.25f;
     r->settings.frustum_culling = 1;
@@ -508,22 +508,51 @@ static void pick_lights(const LightSet *ls, A3Vec4 sphere, u32 max, A3Vec4 *out0
     *out1 = a3_v4(o[4], o[5], o[6], o[7]);
 }
 
-static A3Mat4 shadow_matrix(A3Renderer *r, const A3RenderView *v, A3Vec3 sun_dir) {
-    f32 dist = a3_maxf(r->settings.shadow_distance, 5.0f);
+/* Cascaded shadow maps: the view frustum is cut into 3 slices (near, middle,
+ * far); each slice gets its own sun projection fitted to the slice's bounding
+ * sphere (stable size, so edges do not swim when the camera turns) and
+ * rendered into one tile of a 2x2 atlas. Near objects get sharp shadows,
+ * distant ones still get shadows. */
+#define A3_CASCADES 3
+typedef struct Cascade { A3Mat4 vp; f32 split; f32 texel; f32 inv_depth; } Cascade;
+
+static void cascade_fit(A3Renderer *r, const A3RenderView *v, A3Vec3 sun_dir, f32 n, f32 f, i32 tile, Cascade *out) {
     A3Mat4 inv_view = a3_mat4_inverse_affine(&v->view);
     A3Vec3 fwd = a3_v3_norm(a3_mat4_mul_dir(&inv_view, a3_v3(0, 0, -1)));
-    A3Vec3 center = a3_v3_add(v->camera_pos, a3_v3_scale(fwd, dist * 0.4f));
-    f32 radius = dist * 0.6f;
+    f32 tx = v->proj.m[0] != 0.0f ? 1.0f / a3_absf(v->proj.m[0]) : 1.0f;
+    f32 ty = v->proj.m[5] != 0.0f ? 1.0f / a3_absf(v->proj.m[5]) : 1.0f;
+    f32 k2 = tx * tx + ty * ty;
+    /* bounding sphere of the slice: center on the view axis at c, radius to the far corners */
+    f32 c = a3_minf(f, 0.5f * (n + f) * (1.0f + k2));
+    f32 dfar = f - c, dnear = c - n;
+    f32 rfar = a3_sqrtf(dfar * dfar + f * f * k2), rnear = a3_sqrtf(dnear * dnear + n * n * k2);
+    f32 radius = a3_maxf(rfar, rnear);
+    radius = a3_ceilf(radius * 4.0f) / 4.0f;               /* quantized: size does not jitter */
+    A3Vec3 center = a3_v3_add(v->camera_pos, a3_v3_scale(fwd, c));
     A3Vec3 up = a3_absf(sun_dir.y) > 0.99f ? a3_v3(0, 0, 1) : a3_v3(0, 1, 0);
-    A3Mat4 light_view = a3_mat4_look_at(a3_v3_sub(center, a3_v3_scale(sun_dir, radius * 2.0f)), center, up);
+    f32 back = a3_maxf(radius * 2.0f, 450.0f);              /* tall towers behind the slice still cast */
+    A3Mat4 light_view = a3_mat4_look_at(a3_v3_sub(center, a3_v3_scale(sun_dir, back)), center, up);
     /* snap to texels to stop shadow edges shimmering when the camera moves */
-    f32 texel = (2.0f * radius) / (f32)r->shadow_size;
+    f32 texel = (2.0f * radius) / (f32)tile;
     A3Vec3 lc = a3_mat4_mul_point(&light_view, center);
     A3Vec3 snapped = a3_v3(a3_floorf(lc.x / texel) * texel, a3_floorf(lc.y / texel) * texel, lc.z);
     A3Mat4 fix = a3_mat4_translation(a3_v3(snapped.x - lc.x, snapped.y - lc.y, 0));
     light_view = a3_mat4_mul(&fix, &light_view);
-    A3Mat4 proj = a3_mat4_ortho(-radius, radius, -radius, radius, 0.1f, radius * 4.0f, a3_rhi_depth_zero_to_one());
-    return a3_mat4_mul(&proj, &light_view);
+    f32 range = back + radius * 2.0f;
+    A3Mat4 proj = a3_mat4_ortho(-radius, radius, -radius, radius, 0.1f, range, a3_rhi_depth_zero_to_one());
+    out->vp = a3_mat4_mul(&proj, &light_view);
+    out->split = f;
+    out->texel = texel;
+    out->inv_depth = 1.0f / range;
+    A3_UNUSED(r);
+}
+
+static void shadow_cascades(A3Renderer *r, const A3RenderView *v, A3Vec3 sun_dir, Cascade *cs) {
+    f32 dist = a3_maxf(r->settings.shadow_distance, 5.0f);
+    f32 nearp = a3_maxf(v->near_plane, 0.05f);
+    f32 splits[A3_CASCADES + 1] = { nearp, a3_maxf(dist * 0.08f, nearp + 1.0f), a3_maxf(dist * 0.3f, nearp + 2.0f), dist };
+    i32 tile = r->shadow_size / 2;
+    for (u32 i = 0; i < A3_CASCADES; ++i) cascade_fit(r, v, sun_dir, splits[i], splits[i + 1], tile, &cs[i]);
 }
 
 static int batch_key_bits(u32 v, u32 bits) { return (int)(v & ((1u << bits) - 1)); }
@@ -535,9 +564,15 @@ static u64 make_key(const Renderable *rd) {
 }
 
 static void set_frame_uniforms(A3RhiShader s, const A3RenderView *v, const LightSet *ls, const A3CWorldSettings *ws,
-                               const A3Mat4 *view_proj, const A3Mat4 *light_vp, b32 shadows, i32 shadow_size) {
+                               const A3Mat4 *view_proj, const Cascade *cs, b32 shadows, i32 shadow_size) {
     a3_rhi_set_mat4(s, "u_view_proj", view_proj);
-    a3_rhi_set_mat4(s, "u_light_view_proj", light_vp);
+    a3_rhi_set_mat4(s, "u_light_view_proj", &cs[0].vp);
+    a3_rhi_set_mat4(s, "u_cascade_vp0", &cs[0].vp);
+    a3_rhi_set_mat4(s, "u_cascade_vp1", &cs[1].vp);
+    a3_rhi_set_mat4(s, "u_cascade_vp2", &cs[2].vp);
+    a3_rhi_set_vec3(s, "u_cascade_split", a3_v3(cs[0].split, cs[1].split, cs[2].split));
+    a3_rhi_set_vec3(s, "u_cascade_texel", a3_v3(cs[0].texel, cs[1].texel, cs[2].texel));
+    a3_rhi_set_vec3(s, "u_cascade_depth", a3_v3(cs[0].inv_depth, cs[1].inv_depth, cs[2].inv_depth));
     a3_rhi_set_vec3(s, "u_camera_pos", v->camera_pos);
     a3_rhi_set_float(s, "u_time", v->time);
     a3_rhi_set_vec3(s, "u_sun_dir", ls->sun_dir);
@@ -687,25 +722,31 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
     r->info.batches = nb;
 
     /* ---- shadow pass ---- */
-    A3Mat4 light_vp = a3_mat4_identity();
+    Cascade cascades[A3_CASCADES];
+    for (u32 c = 0; c < A3_CASCADES; ++c) { cascades[c].vp = a3_mat4_identity(); cascades[c].split = 1e9f; cascades[c].texel = 0.05f; cascades[c].inv_depth = 0.001f; }
     if (shadows) {
-        light_vp = shadow_matrix(r, v, ls.sun_dir);
+        shadow_cascades(r, v, ls.sun_dir, cascades);
+        i32 tile = r->shadow_size / 2;
         a3_rhi_target_bind(r->shadow_target, r->shadow_size, r->shadow_size);
         a3_rhi_clear(0, a3_v4(0, 0, 0, 0), 1, 1.0f);
         A3RenderState st = { A3_BLEND_OPAQUE, A3_CULL_NONE, A3_DEPTH_LESS_WRITE, 0, 0, { 0 }, 2.0f };
         a3_rhi_set_state(&st);
         a3_rhi_shader_bind(r->shadow);
-        a3_rhi_set_mat4(r->shadow, "u_view_proj", &light_vp);
-        u32 i = 0;
-        while (i < n_casters) {
-            u32 mesh = items[casters[i]].mesh, j = i + 1;
-            while (j < n_casters && items[casters[j]].mesh == mesh) ++j;
-            const A3MeshAsset *m = a3_assets_mesh_get(mesh);
-            if (m && m->gpu.id) {
-                a3_rhi_mesh_set_instances(m->gpu, r->instance_buf, &r->instance_layout, sizeof(InstanceData) * (np + i));
-                a3_rhi_draw(m->gpu, A3_PRIM_TRIANGLES, 0, m->index_count, j - i);
+        for (u32 c = 0; c < A3_CASCADES; ++c) {
+            /* atlas tiles: cascade 0 bottom-left, 1 bottom-right, 2 top-left */
+            a3_rhi_viewport(c == 1 ? tile : 0, c == 2 ? tile : 0, tile, tile);
+            a3_rhi_set_mat4(r->shadow, "u_view_proj", &cascades[c].vp);
+            u32 i = 0;
+            while (i < n_casters) {
+                u32 mesh = items[casters[i]].mesh, j = i + 1;
+                while (j < n_casters && items[casters[j]].mesh == mesh) ++j;
+                const A3MeshAsset *m = a3_assets_mesh_get(mesh);
+                if (m && m->gpu.id) {
+                    a3_rhi_mesh_set_instances(m->gpu, r->instance_buf, &r->instance_layout, sizeof(InstanceData) * (np + i));
+                    a3_rhi_draw(m->gpu, A3_PRIM_TRIANGLES, 0, m->index_count, j - i);
+                }
+                i = j;
             }
-            i = j;
         }
     }
 
@@ -728,6 +769,8 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
         a3_rhi_set_vec3(r->sky, "u_ground_color", a3_v4_xyz(ws_copy.ground_color));
         a3_rhi_set_vec3(r->sky, "u_sun_dir", ls.sun_dir);
         a3_rhi_set_vec3(r->sky, "u_sun_color", ls.has_sun ? ls.sun_color : a3_v3_zero());
+        a3_rhi_set_float(r->sky, "u_time", v->time);
+        a3_rhi_set_float(r->sky, "u_clouds", ws_copy.cloud_cover);
         a3_rhi_draw_fullscreen();
     }
     a3_rhi_set_draw_buffers(2);
@@ -743,7 +786,7 @@ void a3_renderer_draw_world(A3Renderer *r, A3World *w, const A3RenderView *v) {
             Material *mat = bt->material ? &r->materials[bt->material] : 0;
             shader = (mat && mat->shader.id) ? mat->shader : r->lit;
             a3_rhi_shader_bind(shader);
-            set_frame_uniforms(shader, v, &ls, &ws_copy, &view_proj, &light_vp, shadows, r->shadow_size);
+            set_frame_uniforms(shader, v, &ls, &ws_copy, &view_proj, cascades, shadows, r->shadow_size);
             if (mat) {
                 a3_rhi_set_vec4_array(shader, "u_material", mat->params, 4);
                 a3_rhi_bind_texture(2, mat->textures[0] ? a3_assets_texture_rhi(mat->textures[0]) : a3_assets_white_texture());

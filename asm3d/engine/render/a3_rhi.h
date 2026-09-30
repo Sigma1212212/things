@@ -165,6 +165,8 @@ void a3_rhi_set_draw_buffers(u32 count);   /* write only the first `count` attac
 void a3_rhi_target_destroy(A3RhiTarget t);
 /* Binds a target (id 0 = window backbuffer) and sets the viewport. */
 void a3_rhi_target_bind(A3RhiTarget t, i32 width, i32 height);
+/* Sets the viewport inside the bound target (bottom-left origin), e.g. a shadow atlas tile. */
+void a3_rhi_viewport(i32 x, i32 y, i32 width, i32 height);
 void a3_rhi_clear(b32 color, A3Vec4 rgba, b32 depth, f32 depth_value);
 /* Reads RGBA8 pixels of the bound target (bottom-up rows). */
 void a3_rhi_read_pixels(i32 x, i32 y, i32 w, i32 h, void *out_rgba);

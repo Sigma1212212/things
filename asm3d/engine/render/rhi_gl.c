@@ -644,6 +644,8 @@ void a3_rhi_target_bind(A3RhiTarget h, i32 w, i32 hh) {
     glViewport(0, 0, w, hh);
 }
 
+void a3_rhi_viewport(i32 x, i32 y, i32 w, i32 hh) { glViewport(x, y, w, hh); }
+
 void a3_rhi_clear(b32 color, A3Vec4 c, b32 depth, f32 dv) {
     GLbitfield mask = 0;
     if (color) { glClearColor(c.x, c.y, c.z, c.w); mask |= GL_COLOR_BUFFER_BIT; glColorMask(1, 1, 1, 1); }

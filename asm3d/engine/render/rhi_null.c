@@ -54,6 +54,7 @@ A3RhiTarget a3_rhi_target_create_mrt(const A3RhiTexture *c, u32 n, A3RhiTexture 
 void a3_rhi_set_draw_buffers(u32 n) { A3_UNUSED(n); }
 void a3_rhi_target_destroy(A3RhiTarget t) { A3_UNUSED(t); }
 void a3_rhi_target_bind(A3RhiTarget t, i32 w, i32 h) { A3_UNUSED(t); A3_UNUSED(w); A3_UNUSED(h); }
+void a3_rhi_viewport(i32 x, i32 y, i32 w, i32 h) { A3_UNUSED(x); A3_UNUSED(y); A3_UNUSED(w); A3_UNUSED(h); }
 void a3_rhi_clear(b32 c, A3Vec4 rgba, b32 d, f32 dv) { A3_UNUSED(c); A3_UNUSED(rgba); A3_UNUSED(d); A3_UNUSED(dv); }
 void a3_rhi_read_pixels(i32 x, i32 y, i32 w, i32 h, void *out) { A3_UNUSED(x); A3_UNUSED(y); if (out && w > 0 && h > 0) a3_memset(out, 0, (usize)w * (usize)h * 4); }
 void a3_rhi_set_state(const A3RenderState *s) { A3_UNUSED(s); }

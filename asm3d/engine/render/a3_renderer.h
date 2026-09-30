@@ -17,8 +17,8 @@ typedef struct A3Renderer A3Renderer;
 
 typedef struct A3RenderSettings {
     b32 shadows;
-    i32 shadow_map_size;     /* 512..4096 */
-    f32 shadow_distance;     /* meters covered by the sun shadow */
+    i32 shadow_map_size;     /* 512..4096: the shadow atlas; 3 cascades of half that size each */
+    f32 shadow_distance;     /* meters covered by the sun shadow (the last cascade ends here) */
     b32 fxaa;
     f32 vignette;
     b32 frustum_culling;

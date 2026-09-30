@@ -250,7 +250,7 @@ static void fill_block(Gen *g, f32 x0, f32 z0, f32 x1, f32 z1, District d) {
     f32 cx = (x0 + x1) * 0.5f, cz = (z0 + z1) * 0.5f;
     b32 park = d == D_PARK;
     box(g, g->g_blocks, park ? "Park" : "Block", a3_v3(cx, (LAND_TOP + WALK_TOP) * 0.5f, cz), a3_v3(w, WALK_TOP - LAND_TOP, dp), 0,
-        park ? "builtin:foliage" : "builtin:sidewalk", park ? rgb(0.22f, 0.4f, 0.18f) : rgb(0.66f, 0.65f, 0.62f), 1);
+        park ? "builtin:foliage" : "builtin:sidewalk", park ? rgb(0.22f, 0.4f, 0.18f) : rgb(0.56f, 0.55f, 0.52f), 1);
     f32 m = 4.0f;           /* setback from the curb */
     x0 += m; x1 -= m; z0 += m; z1 -= m;
     w = x1 - x0; dp = z1 - z0;
@@ -330,7 +330,7 @@ static void road(Gen *g, A3Vec2 a, A3Vec2 b, f32 width, b32 walks, b32 lights, u
         for (int side = -1; side <= 1; side += 2) {
             f32 off = side * (width * 0.5f + 2.0f);
             A3Vec3 wc = along_x ? a3_v3(c.x, (LAND_TOP + WALK_TOP) * 0.5f, c.z + off) : a3_v3(c.x + off, (LAND_TOP + WALK_TOP) * 0.5f, c.z);
-            box(g, g->g_roads, "Sidewalk", wc, a3_v3(4.0f, WALK_TOP - LAND_TOP, len), yaw, "builtin:sidewalk", rgb(0.7f, 0.69f, 0.66f), 1);
+            box(g, g->g_roads, "Sidewalk", wc, a3_v3(4.0f, WALK_TOP - LAND_TOP, len), yaw, "builtin:sidewalk", rgb(0.6f, 0.59f, 0.56f), 1);
             /* a few props along the curb, facing the road */
             for (f32 t = 0.2f; t < 0.95f; t += 0.3f) {
                 if (!chance(g, 0.45f)) continue;

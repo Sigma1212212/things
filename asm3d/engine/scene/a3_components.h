@@ -92,6 +92,8 @@ typedef struct A3CWorldSettings {
     f32 saturation;
     f32 contrast;
     A3Vec4 tint;              /* color grade multiplier */
+    f32 cloud_cover;          /* 0 = clear sky .. 1 = mostly cloudy (procedural cloud layer) */
+    f32 _pad_ws[3];
 } A3CWorldSettings;
 
 void a3_register_core_components(void);
