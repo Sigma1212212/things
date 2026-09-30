@@ -67,6 +67,7 @@ fn start_chase() {
     hero.Vehicle.max_speed = 40
     let behind = hero.position - hero.forward * 16
     cop = spawn_car("Police Car", behind, hero.rotation.y, vec3(0.05, 0.06, 0.09), "police")
+    cop.Vehicle.physics_model = "Arcade"    // scripted chase: the simple model follows the breadcrumbs exactly
     cop.Vehicle.ground_probe = false
     cop.Vehicle.collide_world = false
     cop.Vehicle.max_speed = 45

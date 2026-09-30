@@ -48,16 +48,69 @@ network; the tests check it.
 
 ## Vehicles
 
-The **Vehicle** component (`engine/physics/a3_vehicle.c`) is an arcade car:
+The **Vehicle** component (`engine/physics/a3_vehicle.c`) has two physics
+models, picked with the **Physics** field.
 
-- throttle, brakes and reverse with a speed-dependent acceleration curve;
-- bicycle-model steering whose range narrows at speed, with a cornering
-  limit of about 2 g;
-- grip: sideways sliding dies out at a rate set by Grip; the handbrake lowers
-  it, so the car drifts;
-- two ground rays (front and rear axle) for height and pitch, and gravity
-  when there is no ground (ramps and jumps work, and the car can fall into
-  the sea);
+### Realistic (default)
+
+A rigid body with 6 degrees of freedom on four raycast wheels, stepped 4
+times per frame:
+
+- **suspension**: one ray per wheel along the body's down axis; spring and
+  damper per wheel (springs sized to each axle's share of the weight, so the
+  car sits level), anti-roll bars (stiffer at the front) and bump stops. The
+  wheels move up and down with it.
+- **weight transfer is not faked**: tire forces act at the contact patches,
+  below the center of mass, so the body squats when accelerating, dives
+  under braking and rolls out of corners, and the loads on the tires change
+  accordingly.
+- **tires**: the slip angle goes through a Pacejka-style curve (peak grip
+  near 8 degrees, about 85% when fully sliding) and a friction circle shared
+  with traction and braking, so too much throttle or brake in a corner makes
+  the car slide. More heavily loaded tires grip less per newton (load
+  sensitivity). The handbrake locks the rear wheels.
+- **drivetrain**: engine torque curve with a rev limiter, clutch slip when
+  pulling away, 6-speed automatic gearbox, rear / front / all-wheel drive,
+  engine braking, brakes with front bias and ABS. The gearing is chosen so
+  the car reaches **Top Speed** at the redline in top gear, and the drag area
+  so the engine's power runs out there.
+- **Stability Control** (on by default): traction control keeps cornering
+  grip first and gives the engine what is left; stability control applies a
+  yaw moment (like braking one outer wheel) and cuts power when the car
+  rotates faster than the steering asks. Off while the handbrake is held, so
+  drifts still work.
+- **steering** is speed-sensitive: at speed, full lock asks for about the
+  angle of a 1 g turn plus the tires' peak slip angle.
+- weight distribution follows the layout (front-drive 62/38, all-wheel
+  56/44, rear-drive 52/48).
+
+The per-wheel math (suspension load, slip angle, tire curve, friction
+circle, slip amount) runs for all realistic cars in one call per substep to
+the x86-64 SSE assembly kernel `a3_vk_wheels` (`engine/physics/a3_vehicle_x64.S`,
+one SSE lane per wheel). `a3_vehicle_ref.c` is its C reference (used for
+WebAssembly); a test checks the two give bit-identical results. The ray
+casts, the drivetrain logic and the rigid-body integration are C.
+
+`spawn_car` tunes each body style: sedan (rear drive, 1450 kg, 360 N m),
+sports (rear, 1350 kg, 540 N m, stiff springs), SUV (all-wheel, 2050 kg, soft
+and tall), hatch and taxi (front drive), police (rear, 500 N m). Read-only
+fields show **Rpm**, **Gear**, **Wheel Slip** and **Body Roll**.
+
+Every car spawned with `spawn_car` has an **Engine Sound** (a synthesized
+4-cylinder loop whose pitch follows the rpm and whose volume follows the
+throttle) and a **Tire Sound** (squeal that fades in with wheel slip).
+Traffic cars have no sound loops (there are dozens of them).
+
+### Arcade
+
+The simple kinematic model, used by the traffic AI and scripted chases:
+throttle/brake/reverse with a speed-dependent acceleration curve,
+bicycle-model steering with a cornering limit of about 2 g, grip that pulls
+the velocity toward the heading (the handbrake lowers it, so the car drifts),
+two ground rays for height and pitch.
+
+### Both
+
 - the body box is pushed out of walls; the speed into the wall is removed
   and reported as `last_impact`, hard hits add to `damage`; dynamic objects
   are shoved aside;
@@ -65,13 +118,15 @@ The **Vehicle** component (`engine/physics/a3_vehicle.c`) is an arcade car:
   player's car and keeps out of buildings;
 - moving the car more than 3 m in one step (a script teleport) resets it.
 
-Player Controlled cars read W/S (throttle/brake), A/D (steer) and Space
-(handbrake). Otherwise scripts or the traffic system write `throttle`,
-`steer` and `handbrake`. `spawn_car(name, position, yaw, color)` in A3Script
-and `a3_vehicle_spawn_car` in C build a complete car.
+Player Controlled cars read W/S (throttle/brake; holding brake at a stop
+selects reverse), A/D (steer) and Space (handbrake). Otherwise scripts or
+the traffic system write `throttle`, `steer` and `handbrake`.
+`spawn_car(name, position, yaw, color, style)` in A3Script and
+`a3_vehicle_spawn_car_style` in C build a complete car.
 
-It is not a tire or suspension simulation: cars do not roll over, and there
-is no gearbox.
+Not simulated: wheel spin as its own degree of freedom (wheelspin is the
+friction circle saturating), tire temperature and wear, clutch/manual
+gears, damage that changes the car's shape.
 
 ## Traffic
 

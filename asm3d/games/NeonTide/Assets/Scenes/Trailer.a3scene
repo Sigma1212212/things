@@ -5,7 +5,7 @@
   "name": "Scene",
   "entities": [
     {
-      "guid": "95b03388c6db96d7",
+      "guid": "7f106c80360138e1",
       "name": "World Settings",
       "components": {
         "Transform": {
@@ -33,12 +33,13 @@
           "exposure": 1,
           "saturation": 1,
           "contrast": 1,
-          "tint": [1, 1, 1, 1]
+          "tint": [1, 1, 1, 1],
+          "cloud_cover": 0.4
         }
       }
     },
     {
-      "guid": "e8eff8bcf596ee47",
+      "guid": "c633bd343a0c2eb2",
       "name": "Sun",
       "components": {
         "Transform": {
@@ -57,7 +58,7 @@
       }
     },
     {
-      "guid": "c6c13179ad7b23b1",
+      "guid": "04f778e2a504402d",
       "name": "Sol Harbor",
       "components": {
         "Transform": {
@@ -75,7 +76,7 @@
       }
     },
     {
-      "guid": "89a2f8f686948f5f",
+      "guid": "a6e99981ceb8b01b",
       "name": "City Traffic",
       "components": {
         "Transform": {
@@ -94,7 +95,7 @@
       }
     },
     {
-      "guid": "6715d2e1d6b50514",
+      "guid": "63853faadecdda76",
       "name": "Main Camera",
       "components": {
         "Transform": {
@@ -116,7 +117,7 @@
       }
     },
     {
-      "guid": "f91fea49921202e1",
+      "guid": "fc483a691c30631b",
       "name": "Lightbar Template",
       "active": false,
       "components": {
@@ -141,7 +142,7 @@
       }
     },
     {
-      "guid": "4ccd00c02f55674a",
+      "guid": "d4c2fc1f6550072e",
       "name": "Director",
       "components": {
         "Transform": {

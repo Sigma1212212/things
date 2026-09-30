@@ -5,7 +5,7 @@
   "name": "Scene",
   "entities": [
     {
-      "guid": "94002fa0a63fd3fa",
+      "guid": "c4a623888a8cfd6c",
       "name": "World Settings",
       "components": {
         "Transform": {
@@ -33,12 +33,13 @@
           "exposure": 1,
           "saturation": 1,
           "contrast": 1,
-          "tint": [1, 1, 1, 1]
+          "tint": [1, 1, 1, 1],
+          "cloud_cover": 0.4
         }
       }
     },
     {
-      "guid": "cdc482ff6213dd9b",
+      "guid": "c5d19a135a660597",
       "name": "Sun",
       "components": {
         "Transform": {
@@ -57,7 +58,7 @@
       }
     },
     {
-      "guid": "e7c4e9571ae80712",
+      "guid": "dc2935ff6d377389",
       "name": "Sol Harbor",
       "components": {
         "Transform": {
@@ -75,7 +76,7 @@
       }
     },
     {
-      "guid": "2a675bfcf577695e",
+      "guid": "65537e8fb497b31f",
       "name": "City Traffic",
       "components": {
         "Transform": {
@@ -94,7 +95,7 @@
       }
     },
     {
-      "guid": "8900474f9dad2e6f",
+      "guid": "2a6343247432d158",
       "name": "Player",
       "components": {
         "Transform": {
@@ -119,13 +120,20 @@
           "gravity_scale": 1,
           "use_input": true,
           "sounds": true
+        },
+        "Person": {
+          "shirt": [0.95, 0.3, 0.6, 1],
+          "skin": 0.35,
+          "style": 0.2,
+          "height": 1.75,
+          "animate": true
         }
       }
     },
     {
-      "guid": "59fd8d0c7e76f0a7",
+      "guid": "2449eddfc7465bd6",
       "name": "Main Camera",
-      "parent": "8900474f9dad2e6f",
+      "parent": "2a6343247432d158",
       "components": {
         "Transform": {
           "position": [0, 1.65, 0],
@@ -146,57 +154,7 @@
       }
     },
     {
-      "guid": "691f0fe359bcab31",
-      "name": "Body",
-      "parent": "8900474f9dad2e6f",
-      "components": {
-        "Transform": {
-          "position": [0, 0.9, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.5, 0.9, 0.38]
-        },
-        "MeshRenderer": {
-          "primitive": "Capsule",
-          "mesh": "",
-          "base_color": [0.95, 0.3, 0.6, 1],
-          "texture": "",
-          "metallic": 0,
-          "roughness": 0.6,
-          "emissive": 0,
-          "material": "",
-          "cast_shadows": true,
-          "receive_shadows": true,
-          "visible": true
-        }
-      }
-    },
-    {
-      "guid": "755f5639f02fbde6",
-      "name": "Head",
-      "parent": "8900474f9dad2e6f",
-      "components": {
-        "Transform": {
-          "position": [0, 1.68, 0],
-          "rotation": [0, 0, 0],
-          "scale": [0.26, 0.26, 0.26]
-        },
-        "MeshRenderer": {
-          "primitive": "Sphere",
-          "mesh": "",
-          "base_color": [0.8, 0.58, 0.42, 1],
-          "texture": "",
-          "metallic": 0,
-          "roughness": 0.6,
-          "emissive": 0,
-          "material": "",
-          "cast_shadows": true,
-          "receive_shadows": true,
-          "visible": true
-        }
-      }
-    },
-    {
-      "guid": "8994a559ffd9924a",
+      "guid": "d29589ae8d5f41df",
       "name": "Checkpoint",
       "components": {
         "Transform": {
@@ -220,7 +178,7 @@
       }
     },
     {
-      "guid": "23bf88111a8902cb",
+      "guid": "796b59b72ace1dcb",
       "name": "Lightbar Template",
       "active": false,
       "components": {
@@ -245,7 +203,7 @@
       }
     },
     {
-      "guid": "ac135524f0aed22d",
+      "guid": "cd034ee3ce8e940f",
       "name": "Game",
       "components": {
         "Transform": {

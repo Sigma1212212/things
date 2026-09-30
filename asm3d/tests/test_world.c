@@ -8,6 +8,7 @@
 #include "../engine/core/a3_hash.h"
 #include "../engine/world/a3_traffic.h"
 #include "../engine/physics/a3_vehicle.h"
+#include "../engine/physics/a3_vehicle_kernels.h"
 #include "../engine/scene/a3_components.h"
 #include "../engine/physics/a3_physics.h"
 #include "../engine/resource/a3_assets.h"
@@ -124,7 +125,7 @@ static void step_world(A3World *w, u32 steps) {
     }
 }
 
-A3_TEST(world_vehicle_drive_steer_crash) {
+static void vehicle_drive_steer_crash(i32 model) {
     setup();
     A3World *w = a3_world_create("drive");
     ground_box(w, "Ground", a3_v3(0, -0.5f, 0), a3_v3(3000, 1, 3000));
@@ -132,18 +133,38 @@ A3_TEST(world_vehicle_drive_steer_crash) {
     A3CVehicle *v = (A3CVehicle *)a3_component_get(w, car, A3_T_VEHICLE);
     A3_CHECK(v != 0 && a3_entity_valid(w, a3_entity_find_by_name(w, "Wheel FL")));
     if (!v) { a3_world_destroy(w); return; }
+    b32 real = model == A3_VEHICLE_REALISTIC;
+    /* every field made it into the reflection table (none dropped at the field limit) */
+    const A3ComponentType *vt = a3_component_type(A3_T_VEHICLE);
+    A3_CHECK(vt && a3_component_find_field(vt, "roll") && a3_component_find_field(vt, "physics_model") && a3_component_find_field(vt, "gear"));
+    for (u32 i = 0; i < a3_component_type_count(); ++i) {
+        const A3ComponentType *ct = a3_component_type(i);
+        if (ct) A3_CHECK_MSG(ct->field_count < A3_MAX_FIELDS, "component %s is at the field limit", ct->name);
+    }
+    v->physics_model = model;
+    /* at rest the realistic car settles on its springs with the origin on the ground */
+    step_world(w, 60);
+    A3CTransform *t = a3_transform(w, car);
+    A3_CHECK(a3_absf(t->position.y) < 0.03f && a3_absf(t->position.z) < 0.05f);
+    if (real) A3_CHECK(v->comp[0] > 0.03f && v->comp[3] > 0.03f && v->gear == 1);
     /* full throttle: accelerates forward (-Z) and stays on the ground */
     v->throttle = 1;
-    step_world(w, 180);
-    A3CTransform *t = a3_transform(w, car);
-    A3_CHECK(v->speed > 15.0f && v->speed <= v->max_speed + 0.01f);
-    A3_CHECK(t->position.z < -30.0f && a3_absf(t->position.x) < 0.5f);
+    f32 squat = 0;
+    for (u32 i = 0; i < 180; ++i) { step_world(w, 1); if (i == 30) squat = (v->comp[2] + v->comp[3]) - (v->comp[0] + v->comp[1]); }
+    A3_CHECK(v->speed > (real ? 10.0f : 15.0f) && v->speed <= v->max_speed + 0.01f);
+    A3_CHECK(t->position.z < (real ? -12.0f : -30.0f) && a3_absf(t->position.x) < 0.5f);
     A3_CHECK(v->grounded && a3_absf(t->position.y) < 0.05f);
+    if (real) {
+        A3_CHECK_MSG(squat > 0.002f, "no squat under acceleration (%.4f)", squat);   /* weight moves to the rear */
+        A3_CHECK(v->gear >= 2 && v->rpm > 1000.0f && v->rpm < v->redline * 1.03f);
+    }
     /* steering right turns clockwise seen from above: heading swings toward +X */
     v->steer = 1;
-    step_world(w, 60);
+    f32 roll = 0;
+    for (u32 i = 0; i < 60; ++i) { step_world(w, 1); roll = a3_maxf(roll, v->roll); }
     A3Vec3 fwd = a3_quat_rotate(t->rotation, a3_v3(0, 0, -1));
     A3_CHECK(fwd.x > 0.3f);
+    if (real) A3_CHECK_MSG(roll > 0.01f && roll < 0.15f, "body roll %.3f in a right turn", roll);   /* leans out of the turn */
     /* brake to a stop */
     v->steer = 0;
     v->throttle = -1;
@@ -162,6 +183,9 @@ A3_TEST(world_vehicle_drive_steer_crash) {
     A3_CHECK(dist_to_wall_center > 15.0f);   /* did not drive through the wall */
     a3_world_destroy(w);
 }
+
+A3_TEST(world_vehicle_drive_steer_crash) { vehicle_drive_steer_crash(A3_VEHICLE_REALISTIC); }
+A3_TEST(world_vehicle_arcade_drive) { vehicle_drive_steer_crash(A3_VEHICLE_ARCADE); }
 
 A3_TEST(world_traffic_follows_roads) {
     setup();
@@ -257,4 +281,54 @@ A3_TEST(world_geometry_kernels_bit_exact) {
     A3_CHECK(a3_gk_signed_volume(cv, cube.indices, cube.index_count / 3) > 0.0f);
     a3_mesh_free(&cube);
     A3_CHECK(a3_strlen(a3_gk_backend()) > 0);
+}
+
+A3_TEST(vehicle_wheel_kernel_bit_exact) {
+    A3Rng rng;
+    a3_rng_seed(&rng, 7, 3);
+    enum { NQ = 64 };
+    static A3WheelQuad q1[NQ], q2[NQ];
+    for (u32 n = 0; n < NQ; ++n) {
+        for (int i = 0; i < 4; ++i) {
+            q1[n].comp[i] = a3_rng_range_f32(&rng, -0.05f, 0.25f);
+            q1[n].comp_vel[i] = a3_rng_range_f32(&rng, -3, 3);
+            q1[n].stiffness[i] = a3_rng_range_f32(&rng, 20000, 60000);
+            q1[n].damping[i] = a3_rng_range_f32(&rng, 1000, 5000);
+            q1[n].v_long[i] = a3_rng_range_f32(&rng, -60, 60);
+            q1[n].v_lat[i] = a3_rng_range_f32(&rng, -20, 20);
+            q1[n].mu[i] = a3_rng_range_f32(&rng, 0.3f, 1.3f);
+            q1[n].drive[i] = a3_rng_range_f32(&rng, -12000, 12000);
+            q1[n].lock[i] = a3_rng_f32(&rng) < 0.2f ? 1.0f : 0.0f;
+        }
+    }
+    /* edge cases: at rest, exactly zero lateral speed, negative zero, huge slip */
+    q1[0].v_long[0] = 0.0f; q1[0].v_lat[0] = 0.0f;
+    q1[0].v_long[1] = -0.0f; q1[0].lock[1] = 1.0f;
+    q1[0].v_lat[2] = 1e6f; q1[0].comp[3] = 0.0f;
+    a3_memcpy(q2, q1, sizeof(q1));
+    a3_vk_wheels(q1, NQ);
+    a3_vk_ref_wheels(q2, NQ);
+    A3_CHECK(same_bits(q1, q2, sizeof(q1)));
+    /* physics sanity */
+    A3WheelQuad t;
+    a3_zero_struct(&t);
+    for (int i = 0; i < 4; ++i) { t.comp[i] = 0.1f; t.stiffness[i] = 40000; t.mu[i] = 1.0f; t.v_long[i] = 20.0f; }
+    t.v_lat[0] = 2.0f;                  /* sliding right -> force to the left */
+    t.v_lat[1] = -2.0f;
+    t.drive[2] = 1e6f;                  /* more than the tire can take */
+    t.lock[3] = 1.0f;
+    a3_vk_wheels(&t, 1);
+    A3_CHECK(t.load[0] == 4000.0f);
+    A3_CHECK(t.fy[0] < -3000.0f && t.fy[0] >= -4000.0f && t.fy[1] == -t.fy[0]);
+    A3_CHECK(t.fx[2] == 4000.0f && t.fy[2] == 0.0f && t.slip[2] == 1.0f);   /* wheelspin: no grip left */
+    A3_CHECK(t.fx[3] < -3500.0f && t.slip[3] == 1.0f);                   /* locked: slides against the motion */
+    A3_CHECK(t.slip[0] < 0.5f);
+    f32 in[4] = { 0.0f, 0.5f, -2.0f, 30.0f }, at[4], sn[4];
+    a3_vk_ref_atan4(in, at);
+    a3_vk_ref_sin4(in, sn);
+    for (int i = 0; i < 4; ++i) {
+        A3_CHECK(a3_absf(at[i] - a3_atan2f(in[i], 1.0f)) < 1e-5f);
+        A3_CHECK(a3_absf(sn[i] - a3_sinf(in[i])) < 1e-4f);
+    }
+    A3_CHECK(a3_strlen(a3_vk_backend()) > 0);
 }

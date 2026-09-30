@@ -44,10 +44,12 @@ u32  a3_audio_clip_channels(u32 clip);
 /* Built-in synthesized sounds (no files needed). */
 typedef enum A3BuiltinSound {
     A3_SOUND_NONE = 0, A3_SOUND_JUMP, A3_SOUND_COIN, A3_SOUND_HIT, A3_SOUND_EXPLOSION, A3_SOUND_LASER, A3_SOUND_CLICK,
-    A3_SOUND_FOOTSTEP, A3_SOUND_POWERUP, A3_SOUND_HURT, A3_SOUND_WIND, A3_SOUND_ENGINE, A3_SOUND_BEEP, A3_SOUND_COUNT
+    A3_SOUND_FOOTSTEP, A3_SOUND_POWERUP, A3_SOUND_HURT, A3_SOUND_WIND, A3_SOUND_ENGINE, A3_SOUND_BEEP, A3_SOUND_SKID, A3_SOUND_COUNT
 } A3BuiltinSound;
 extern const char *const a3_builtin_sound_names[A3_SOUND_COUNT];
-/* Renders a built-in sound to mono float samples (a3_malloc'd). */
+/* Renders a built-in sound to mono float samples (a3_malloc'd).
+ * "engine" is a 4-cylinder engine at 2000 rpm (loop; pitch = rpm / 2000),
+ * "skid" a tire squeal (loop). */
 f32 *a3_audio_synth(u32 sound, u32 rate, u32 *out_frames);
 
 /* ---- voices (playing sounds) ---- */

@@ -81,11 +81,10 @@ fn enter_car(c) {
     car = c
     if has_component(c, "TrafficAgent") { remove_component(c, "TrafficAgent") }
     c.Vehicle.use_input = true
+    c.Vehicle.physics_model = "Realistic"    // suspension, tire grip, engine and gearbox
     c.Vehicle.ground_probe = true
     c.Vehicle.collide_world = true
-    c.Vehicle.max_speed = 58
-    c.Vehicle.acceleration = 15
-    c.Vehicle.grip = 0.8
+    if c.Vehicle.max_speed < 50 { c.Vehicle.max_speed = 50 }
     c.Vehicle.handbrake = false
     last_damage = c.Vehicle.damage
     cam.parent = nil
@@ -168,6 +167,7 @@ fn spawn_cop() {
     let p = road_point(player_pos(), 140, 260)
     if p == nil { return }
     let c = spawn_car("Police Car", p, random(0, 360), vec3(0.06, 0.07, 0.1), "police")
+    c.Vehicle.physics_model = "Arcade"      // the police AI below steers the simple model
     c.Vehicle.max_speed = 50 + floor(heat) * 3
     c.Vehicle.acceleration = 13
     c.Vehicle.grip = 0.9

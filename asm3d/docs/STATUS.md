@@ -1,7 +1,7 @@
 # ASM3D Status
 
 This file says exactly what works today. If a feature is not listed under
-**Working**, it does not work yet. Last updated with the city, vehicles and Neon Tide milestone.
+**Working**, it does not work yet. Last updated with the realism milestone (detailed models, sky, cascaded shadows, realistic vehicles).
 
 Legend: **Working** = implemented, used by the editor or games, and covered by
 tests or the editor self test. **Partial** = usable but with the limits
@@ -38,11 +38,13 @@ listed. **Planned** = not implemented yet.
 | Renderer: PBR forward, sun shadows, sky, instancing, SIMD culling | Working | OpenGL 3.3 backend, plus a null backend for tests. |
 | Local lights | Working | Up to 1024 point/spot lights per frame in a light texture; each object is shaded by its 8 nearest (picked on the CPU with a linear scan: fine for a city's ~800 lamps, a spatial grid is planned). |
 | Post-processing: SSAO, screen-space reflections, exponential height fog with sun glow, 5-level bloom, exposure / contrast / saturation / tint, ACES, vignette, FXAA | Working | All screen-space on OpenGL 3.3. This is not hardware ray tracing: reflections only show what is on screen, and fall back to the sky gradient. |
-| Builtin procedural materials (`builtin:building`, `artdeco`, `tower`, `road`, `sidewalk`, `sand`, `water`, `glass`, `neon`, `carpaint`, `palm_trunk`, `foliage`, `metal`) | Working | Computed from world position (no textures). Windows and neon light up automatically at night. |
+| Sky: atmospheric gradient, sun disk and glow, clouds, stars and moon | Working | Shader sky: horizon haze band, sun-side brightening, Henyey-Greenstein sun glow, limb-darkened sun, an fbm cloud layer that drifts with the wind and is lit from the sun side (WorldSettings **Clouds**), twinkling stars and a moon at night. An approximation, not a physical scattering simulation; clouds are a flat layer (no volumetric flight through them). |
+| Sun shadows | Working | Cascaded shadow maps: 3 cascades fitted to slices of the view in one 4096 atlas, texel-snapped, with normal-offset and slope bias; shadows reach 160 m (Shadow Distance). Local lights do not cast shadows yet. |
+| Builtin procedural materials (`builtin:building`, `artdeco`, `tower`, `road`, `sidewalk`, `sand`, `water`, `glass`, `neon`, `carpaint`, `palm_trunk`, `foliage`, `metal`, `carbody`, `wheel`, `palm`, `human`, `signal`, `props`) | Working | Computed from world position (no textures). Building windows use interior mapping: a room (walls, floor, lit ceiling, furniture) is ray-traced behind each window in the shader, so windows have depth and parallax. Windows, car lights and neon light up automatically at night. |
 | Custom materials (`.a3shader`) | Working | Made with the Shader Maker, loaded by the renderer in the editor and in games. |
 | Physics: rigid bodies, box/sphere/capsule/mesh colliders, SAT contacts, warm starting, sleeping, triggers, raycasts | Working | Assembly kernels for integration, AABBs, sweep-and-prune, the solver and raycasts. Character controllers are detected by trigger colliders (a sensor capsule that never collides or blocks rays). |
 | Character controller (walk, run, jump, stairs, slopes, 1st/3rd person camera) | Working | |
-| Audio: mixer, WAV, 3D sound, AudioSource/AudioListener | Working | SSE assembly mixing kernels (bit-exact C reference). Output via WASAPI on Windows and ALSA on Linux; silent if there is no device. 12 synthesized built-in sounds, plus automatic footsteps and jump sounds for the character. OGG/MP3 decoding is planned. |
+| Audio: mixer, WAV, 3D sound, AudioSource/AudioListener | Working | SSE assembly mixing kernels (bit-exact C reference). Output via WASAPI on Windows and ALSA on Linux; silent if there is no device. 13 synthesized built-in sounds (including a 4-cylinder engine loop and tire squeal used by cars), plus automatic footsteps and jump sounds for the character. OGG/MP3 decoding is planned. |
 | Animation: keyframe clips, Animator, Motion, timeline editor | Working | Tracks animate any reflected field (transform, light, colors, custom components) with smooth, linear or step keys. |
 | Skeletal animation (bones, skinning, blending) | Planned | Needs glTF import. |
 | Particles: emitters, 10 presets, instanced billboards | Working | SSE assembly integration kernel (bit-exact C reference). Additive and alpha-sorted blending; previewed live in the editor. GPU simulation and collision are planned. |
@@ -51,10 +53,10 @@ listed. **Planned** = not implemented yet.
 | Script HUD (text, rectangles, bars) | Working | Drawn over the game window and the editor viewport on a 1280 x 720 canvas. Text is a scaled bitmap font (large sizes look soft). |
 | Visual scripting | Planned | |
 | Procedural city (Sol Harbor) | Working | `engine/world/a3_citygen.c`: a fictional coastal city whose layout is loosely inspired by Miami (downtown towers by a bay, causeways to a barrier island with an Art Deco beachfront, a port). About 6,000 objects and 800 street lights, generated in ~0.1 s from a seed, with day / sunset / night looks and a road graph. Made of boxes and procedural meshes; it is not a map of the real city. See docs/CITY.md. |
-| Procedural meshes (`builtin:palm_crown`, `car_body`, `car_glass`, `wheel`) | Working | Built with the modeling library; any code can register more generators. |
+| Procedural models | Working | Cars in 6 styles (lofted bodies with wheel arches, glass, lights, mirrors; detailed wheels), 3 palm variants, jointed people (Person component with a walk / run cycle), traffic lights, hydrants, benches, bins, street lamps. Geometry kernels (spline sampling, lofting, normals, winding, walk pose) are x86-64 assembly with bit-exact C references. Low-poly compared with hand-made game art. |
 | Terrain, world streaming, LOD | Planned | The city is small enough to load whole; there is no streaming or LOD yet. |
-| Vehicles (arcade car model) | Working | Vehicle component: throttle/brake/reverse, steering with a cornering limit, handbrake drift, ground rays, wall collisions with impact and damage, chase camera. Not a tire/suspension simulation; cars do not roll over. |
-| Traffic (AI cars and pedestrians on a road graph) | Working | Cars drive on the right, turn at intersections, slow for corners and keep their distance; jams resolve by timeout. Not yet: traffic lights, lane changes, pedestrians reacting to cars, navigation meshes. |
+| Vehicles | Working | Realistic model (default): rigid body on raycast suspension with anti-roll bars, Pacejka-style tires with a friction circle and load sensitivity, engine torque curve, 6-speed automatic, rear/front/all-wheel drive, ABS, traction and stability control, drag; the wheel math is an x86-64 assembly kernel (bit-exact C reference). Arcade model for AI traffic. Engine and tire sounds. See docs/CITY.md. Not simulated: separate wheel spin, tire temperature, manual gears, visible damage. |
+| Traffic (AI cars and pedestrians on a road graph) | Working | Cars drive on the right, turn at intersections, slow for corners and keep their distance; jams resolve by timeout. Traffic lights at intersections run a shared 30 s cycle and cars stop for red and amber. Not yet: lane changes, pedestrians reacting to cars, navigation meshes. |
 | Water | Partial | An animated reflective water material on a plane. No waves that move geometry, no swimming or buoyancy. |
 | Weather | Planned | Time of day presets only (day, sunset, night). |
 | Plugins (runtime-loaded modules) | Planned | Components from missing plugins are already preserved in scenes. |

@@ -29,10 +29,9 @@ q entity set $S "City Traffic" Traffic.roads generated Traffic.cars 70 Traffic.p
 
 q entity add $S Player --at 406.8,0.7,54 --rotation 0,90,0 --with CharacterController
 q entity set $S Player CharacterController.camera_mode "Third Person" CharacterController.camera_distance 4.5 CharacterController.walk_speed 4 CharacterController.sprint_speed 8
-q entity add $S Body --parent Player --at 0,0.9,0 --scale 0.5,0.9,0.38 --primitive capsule
-q entity set $S Player/Body MeshRenderer.base_color 0.95,0.3,0.6,1 MeshRenderer.roughness 0.6
-q entity add $S Head --parent Player --at 0,1.68,0 --scale 0.26,0.26,0.26 --primitive sphere
-q entity set $S Player/Head MeshRenderer.base_color 0.8,0.58,0.42,1
+# a jointed human body (builtin:human_* parts) that walks and runs with the controller
+q component add $S Player Person
+q entity set $S Player Person.shirt 0.95,0.3,0.6,1 Person.skin 0.35 Person.style 0.2 Person.height 1.75
 # the Character Controller added "Player Camera"; the game script looks for "Main Camera"
 q entity rename $S "Player/Player Camera" "Main Camera"
 q entity set $S "Player/Main Camera" Camera.primary true Camera.far_plane 3000 Camera.fov 62 Camera.near_plane 0.1
