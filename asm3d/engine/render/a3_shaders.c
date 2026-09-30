@@ -82,6 +82,7 @@ const char *A3_SHADER_LIT_FS_HEAD =
     "uniform float u_wetness;\n"        /* weather: 0 dry .. 1 soaked */
     "uniform float u_rain;\n"           /* 0 .. 1: raindrop ripples in puddles */
     "uniform float u_flash;\n"          /* lightning */
+    "uniform float u_clouds;\n"
     /* local lights: 256 per row, 3 texels each (position + range, color + type, spot direction + cos) */
     "uniform sampler2D u_light_tex;\n"
     "uniform int u_fog_in_post;\n"
@@ -123,8 +124,122 @@ const char *A3_SHADER_DEFAULT_SURFACE =
     "    s.albedo = base;\n"
     "}\n";
 
+/* The procedural sky (sky pass and reflections): gradient with horizon haze,
+ * sun-side brightening, Mie glow, stars, cloud layer, sun disk or moon
+ * (disk = 0 leaves the disk out: reflections get the sun from the BRDF). */
+#define A3_SKY_LIB \
+    "float a3sk_hash2(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n" \
+    "float a3sk_hash3(vec3 p) { p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.x + p.y) * p.z); }\n" \
+    "float a3sk_noise(vec2 p) {\n" \
+    "    vec2 i = floor(p), f = fract(p);\n" \
+    "    vec2 u = f * f * (3.0 - 2.0 * f);\n" \
+    "    float a = a3sk_hash2(i), b = a3sk_hash2(i + vec2(1.0, 0.0)), c = a3sk_hash2(i + vec2(0.0, 1.0)), d = a3sk_hash2(i + vec2(1.0, 1.0));\n" \
+    "    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);\n" \
+    "}\n" \
+    "float a3sk_fbm(vec2 p) {\n" \
+    "    float v = 0.0, a = 0.5;\n" \
+    "    for (int i = 0; i < 6; ++i) { v += a * a3sk_noise(p); p = mat2(1.6, 1.2, -1.2, 1.6) * p; a *= 0.5; }\n" \
+    "    return v;\n" \
+    "}\n" \
+    "vec3 a3_sky_eval(vec3 dir, vec3 cam, vec3 top, vec3 horizon, vec3 ground, vec3 sun_dir, vec3 sun_color, float time, float clouds, float rain, float flash, float disk) {\n" \
+    "    float h = dir.y;\n" \
+    "    vec3 to_sun = -sun_dir;\n" \
+    "    float sun_lum = dot(sun_color, vec3(0.2126, 0.7152, 0.0722));\n" \
+    "    float night = 1.0 - smoothstep(0.06, 0.35, sun_lum);\n" \
+    "    float mu = dot(dir, to_sun);\n" \
+    "    float sun_h = to_sun.y;\n" \
+    "    /* sky gradient: the scene's zenith / horizon colors, with a denser,\n" \
+    "       brighter band at the horizon (optical depth grows toward it) */\n" \
+    "    float hp = clamp(h, 0.0, 1.0);\n" \
+    "    vec3 sky = mix(horizon, top, pow(hp, 0.45));\n" \
+    "    sky = mix(sky, horizon * 1.12, exp(-hp * 18.0) * 0.5);\n" \
+    "    /* Rayleigh-like: bluer overhead, brighter on the sun side of the sky */\n" \
+    "    float ray = 0.75 * (1.0 + mu * mu);\n" \
+    "    sky *= mix(1.0, 0.85 + 0.2 * ray, 1.0 - night);\n" \
+    "    /* Mie forward scattering around the sun (Henyey-Greenstein, g = 0.76);\n" \
+    "       warmer and wider when the sun is low */\n" \
+    "    float g = 0.76, g2 = g * g;\n" \
+    "    float hg = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5) * 0.0796;\n" \
+    "    float low = 1.0 - smoothstep(0.0, 0.5, sun_h);\n" \
+    "    vec3 mie_col = mix(sun_color, sun_color * vec3(1.0, 0.72, 0.5), low);\n" \
+    "    sky += mie_col * hg * (0.06 + 0.12 * low) * (1.0 - night * 0.8) * smoothstep(-0.15, 0.05, h);\n" \
+    "    /* horizon glow toward the sun at sunset */\n" \
+    "    sky += sun_color * vec3(1.0, 0.55, 0.3) * pow(max(mu, 0.0), 4.0) * exp(-hp * 7.0) * low * 0.35 * (1.0 - night);\n" \
+    "    vec3 col = sky;\n" \
+    "    if (h > 0.0) {\n" \
+    "        /* stars (fade in at night, fade near the horizon haze) */\n" \
+    "        if (night > 0.01) {\n" \
+    "            vec3 sp = dir * 260.0;\n" \
+    "            vec3 cell = floor(sp);\n" \
+    "            float r = a3sk_hash3(cell);\n" \
+    "            if (r > 0.9965) {\n" \
+    "                vec3 c = cell + 0.5 + (vec3(a3sk_hash3(cell + 7.1), a3sk_hash3(cell + 3.7), a3sk_hash3(cell + 1.3)) - 0.5) * 0.6;\n" \
+    "                float d = length(sp - c);\n" \
+    "                float tw = 0.65 + 0.35 * sin(time * (1.5 + r * 40.0) + r * 600.0);\n" \
+    "                float mag = (r - 0.9965) / 0.0035;\n" \
+    "                vec3 tint = mix(vec3(0.75, 0.82, 1.0), vec3(1.0, 0.85, 0.7), a3sk_hash3(cell + 9.9));\n" \
+    "                col += tint * smoothstep(0.35, 0.0, d) * (0.4 + 2.6 * mag * mag) * tw * night * smoothstep(0.02, 0.25, h);\n" \
+    "            }\n" \
+    "        }\n" \
+    "        /* cloud layer: a slab 1.6 km up, fbm density advected by the wind,\n" \
+    "           lit by stepping a few samples toward the sun */\n" \
+    "        if (clouds > 0.0 && h > 0.015) {\n" \
+    "            float t = (1600.0 - cam.y) / h;\n" \
+    "            vec2 wind = vec2(time * 6.0, time * 2.0);\n" \
+    "            vec2 p = (cam.xz + dir.xz * t + wind) * 0.00055;\n" \
+    "            float cover = mix(mix(0.62, 0.42, clamp(clouds, 0.0, 1.0)), 0.18, rain);\n" \
+    "            float n = a3sk_fbm(p);\n" \
+    "            float dens = smoothstep(cover, cover + 0.2, n);\n" \
+    "            if (dens > 0.001) {\n" \
+    "                vec2 sdir = normalize(to_sun.xz + vec2(1e-4)) * 0.035;\n" \
+    "                float shade = 0.0;\n" \
+    "                for (int k = 1; k <= 3; ++k) shade += smoothstep(cover, cover + 0.3, a3sk_fbm(p + sdir * float(k)));\n" \
+    "                shade /= 3.0;\n" \
+    "                float lit = exp(-shade * 1.8);\n" \
+    "                vec3 amb_c = mix(top, horizon, 0.5) * 0.9;\n" \
+    "                vec3 sun_c = sun_color * (1.0 + low * 0.3) * (0.9 + 1.2 * pow(max(mu, 0.0), 6.0));\n" \
+    "                vec3 cloud = amb_c * (0.75 + 0.25 * n) + sun_c * lit * 0.95;\n" \
+    "                /* silver lining toward the sun */\n" \
+    "                cloud += sun_color * pow(max(mu, 0.0), 24.0) * (1.0 - dens) * 2.0;\n" \
+    "                cloud = mix(cloud, vec3(dot(cloud, vec3(0.33))) * vec3(0.55, 0.55, 0.7) + horizon * 0.25, night * 0.7);\n"    "                cloud = mix(cloud, vec3(dot(cloud, vec3(0.3))) * (0.55 - 0.25 * n), rain * 0.8);\n" \
+    "                cloud += vec3(0.8, 0.85, 1.0) * flash * (0.6 + n);\n" \
+    "                float fade = smoothstep(0.015, 0.2, h) * exp(-t * 0.00003);\n" \
+    "                col = mix(col, cloud, dens * fade * 0.92);\n" \
+    "            }\n" \
+    "        }\n" \
+    "    } else {\n" \
+    "        col = mix(horizon, ground, clamp(-h * 4.0, 0.0, 1.0));\n" \
+    "    }\n" \
+    "    /* the sun disk (limb-darkened) by day, the moon (with maria) at night */\n" \
+    "    float vis = smoothstep(-0.02, 0.01, h) * (1.0 - rain * 0.95) * disk;\n" \
+    "    if (night < 0.5) {\n" \
+    "        float cosr = 0.99985;\n" \
+    "        if (mu > cosr - 0.00008) {\n" \
+    "            float x = clamp((1.0 - mu) / (1.0 - cosr), 0.0, 1.0);\n" \
+    "            float limb = 1.0 - 0.6 * (1.0 - sqrt(max(1.0 - x * x, 0.0)));\n" \
+    "            col += sun_color * 22.0 * limb * smoothstep(1.06, 0.94, x) * vis;\n" \
+    "        }\n" \
+    "        col += sun_color * pow(max(mu, 0.0), 700.0) * 3.0 * vis;\n" \
+    "    } else {\n" \
+    "        float cosr = 0.99975;\n" \
+    "        if (mu > cosr - 0.0001) {\n" \
+    "            vec3 up = abs(to_sun.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);\n" \
+    "            vec3 ax = normalize(cross(up, to_sun)), ay = cross(to_sun, ax);\n" \
+    "            vec2 q = vec2(dot(dir, ax), dot(dir, ay)) / sqrt(1.0 - cosr * cosr);\n" \
+    "            float rr = length(q);\n" \
+    "            float maria = a3sk_fbm(q * 2.5 + 11.0);\n" \
+    "            vec3 mc = vec3(0.95, 0.95, 1.0) * (0.75 + 0.4 * smoothstep(0.55, 0.35, maria));\n" \
+    "            col = mix(col, mc * 2.2, smoothstep(1.04, 0.96, rr) * vis);\n" \
+    "        }\n" \
+    "        col += vec3(0.6, 0.66, 0.9) * pow(max(mu, 0.0), 180.0) * 0.35 * vis;\n" \
+    "    }\n" \
+    "    col = mix(col, vec3(dot(col, vec3(0.3))) * 0.8, rain * 0.6) + vec3(0.6, 0.65, 0.8) * flash * 0.5;\n" \
+    "    return col;\n" \
+    "}\n"
+
 const char *A3_SHADER_LIT_FS_TAIL =
     "/* ---- lighting ---- */\n"
+    A3_SKY_LIB
     "float a3_distribution_ggx(float ndh, float r) { float a = r * r; float a2 = a * a; float d = ndh * ndh * (a2 - 1.0) + 1.0; return a2 / (PI * d * d + 1e-6); }\n"
     "float a3_geometry(float ndv, float ndl, float r) { float k = (r + 1.0); k = k * k / 8.0; return (ndv / (ndv * (1.0 - k) + k)) * (ndl / (ndl * (1.0 - k) + k)); }\n"
     "vec3 a3_fresnel(float c, vec3 f0) { return f0 + (1.0 - f0) * pow(clamp(1.0 - c, 0.0, 1.0), 5.0); }\n"
@@ -224,6 +339,8 @@ const char *A3_SHADER_LIT_FS_TAIL =
     "    vec3 refl = reflect(-s.view_dir, s.normal);\n"
     /* environment reflection: the sky gradient for smooth surfaces, blurred to the ambient term when rough */
     "    vec3 sky_refl = refl.y >= 0.0 ? mix(u_sky_horizon, u_sky_color, pow(clamp(refl.y, 0.0, 1.0), 0.45)) : mix(u_sky_horizon, u_ground_color, clamp(-refl.y * 4.0, 0.0, 1.0));\n"
+    /* smooth surfaces (water, paint, glass, puddles) reflect the real sky: clouds, sunset glow, stars */
+    "    if (s.roughness < 0.35 && refl.y > -0.05) sky_refl = mix(a3_sky_eval(refl, s.world_pos, u_sky_color, u_sky_horizon, u_ground_color, u_sun_dir, u_sun_color, u_time, u_clouds, u_rain, u_flash, 0.0), sky_refl, smoothstep(0.15, 0.35, s.roughness));\n"
     "    vec3 env = mix(sky_refl, mix(u_ground_color, u_sky_color, smoothstep(-0.2, 0.4, refl.y)) * u_ambient * 2.0, clamp(s.roughness * 1.6, 0.0, 1.0));\n"
     "    color += (amb * s.albedo * (1.0 - fa) * (1.0 - s.metallic) + env * fa * (1.0 - s.roughness * 0.6)) * s.occlusion;\n"
     "    color += s.emissive + s.albedo * v_params.z;\n"
@@ -287,115 +404,11 @@ const char *A3_SHADER_SKY_FS =
     "uniform float u_clouds;\n"
     "uniform float u_rain;\n"
     "uniform float u_flash;\n"
-    "float hash2(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
-    "float hash3(vec3 p) { p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.x + p.y) * p.z); }\n"
-    "float vnoise(vec2 p) {\n"
-    "    vec2 i = floor(p), f = fract(p);\n"
-    "    vec2 u = f * f * (3.0 - 2.0 * f);\n"
-    "    float a = hash2(i), b = hash2(i + vec2(1.0, 0.0)), c = hash2(i + vec2(0.0, 1.0)), d = hash2(i + vec2(1.0, 1.0));\n"
-    "    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);\n"
-    "}\n"
-    "float fbm(vec2 p) {\n"
-    "    float v = 0.0, a = 0.5;\n"
-    "    for (int i = 0; i < 6; ++i) { v += a * vnoise(p); p = mat2(1.6, 1.2, -1.2, 1.6) * p; a *= 0.5; }\n"
-    "    return v;\n"
-    "}\n"
+    A3_SKY_LIB
     "void main() {\n"
     "    vec4 far = u_inv_view_proj * vec4(v_ndc, 1.0, 1.0);\n"
     "    vec3 dir = normalize(far.xyz / far.w - u_camera_pos);\n"
-    "    float h = dir.y;\n"
-    "    vec3 to_sun = -u_sun_dir;\n"
-    "    float sun_lum = dot(u_sun_color, vec3(0.2126, 0.7152, 0.0722));\n"
-    "    float night = 1.0 - smoothstep(0.06, 0.35, sun_lum);\n"
-    "    float mu = dot(dir, to_sun);\n"
-    "    float sun_h = to_sun.y;\n"
-    "    /* sky gradient: the scene's zenith / horizon colors, with a denser,\n"
-    "       brighter band at the horizon (optical depth grows toward it) */\n"
-    "    float hp = clamp(h, 0.0, 1.0);\n"
-    "    vec3 sky = mix(u_sky_horizon, u_sky_top, pow(hp, 0.45));\n"
-    "    sky = mix(sky, u_sky_horizon * 1.12, exp(-hp * 18.0) * 0.5);\n"
-    "    /* Rayleigh-like: bluer overhead, brighter on the sun side of the sky */\n"
-    "    float ray = 0.75 * (1.0 + mu * mu);\n"
-    "    sky *= mix(1.0, 0.85 + 0.2 * ray, 1.0 - night);\n"
-    "    /* Mie forward scattering around the sun (Henyey-Greenstein, g = 0.76);\n"
-    "       warmer and wider when the sun is low */\n"
-    "    float g = 0.76, g2 = g * g;\n"
-    "    float hg = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5) * 0.0796;\n"
-    "    float low = 1.0 - smoothstep(0.0, 0.5, sun_h);\n"
-    "    vec3 mie_col = mix(u_sun_color, u_sun_color * vec3(1.0, 0.72, 0.5), low);\n"
-    "    sky += mie_col * hg * (0.06 + 0.12 * low) * (1.0 - night * 0.8) * smoothstep(-0.15, 0.05, h);\n"
-    "    /* horizon glow toward the sun at sunset */\n"
-    "    sky += u_sun_color * vec3(1.0, 0.55, 0.3) * pow(max(mu, 0.0), 4.0) * exp(-hp * 7.0) * low * 0.35 * (1.0 - night);\n"
-    "    vec3 col = sky;\n"
-    "    if (h > 0.0) {\n"
-    "        /* stars (fade in at night, fade near the horizon haze) */\n"
-    "        if (night > 0.01) {\n"
-    "            vec3 sp = dir * 260.0;\n"
-    "            vec3 cell = floor(sp);\n"
-    "            float r = hash3(cell);\n"
-    "            if (r > 0.9965) {\n"
-    "                vec3 c = cell + 0.5 + (vec3(hash3(cell + 7.1), hash3(cell + 3.7), hash3(cell + 1.3)) - 0.5) * 0.6;\n"
-    "                float d = length(sp - c);\n"
-    "                float tw = 0.65 + 0.35 * sin(u_time * (1.5 + r * 40.0) + r * 600.0);\n"
-    "                float mag = (r - 0.9965) / 0.0035;\n"
-    "                vec3 tint = mix(vec3(0.75, 0.82, 1.0), vec3(1.0, 0.85, 0.7), hash3(cell + 9.9));\n"
-    "                col += tint * smoothstep(0.35, 0.0, d) * (0.4 + 2.6 * mag * mag) * tw * night * smoothstep(0.02, 0.25, h);\n"
-    "            }\n"
-    "        }\n"
-    "        /* cloud layer: a slab 1.6 km up, fbm density advected by the wind,\n"
-    "           lit by stepping a few samples toward the sun */\n"
-    "        if (u_clouds > 0.0 && h > 0.015) {\n"
-    "            float t = (1600.0 - u_camera_pos.y) / h;\n"
-    "            vec2 wind = vec2(u_time * 6.0, u_time * 2.0);\n"
-    "            vec2 p = (u_camera_pos.xz + dir.xz * t + wind) * 0.00055;\n"
-    "            float cover = mix(mix(0.62, 0.42, clamp(u_clouds, 0.0, 1.0)), 0.18, u_rain);\n"
-    "            float n = fbm(p);\n"
-    "            float dens = smoothstep(cover, cover + 0.2, n);\n"
-    "            if (dens > 0.001) {\n"
-    "                vec2 sdir = normalize(to_sun.xz + vec2(1e-4)) * 0.035;\n"
-    "                float shade = 0.0;\n"
-    "                for (int k = 1; k <= 3; ++k) shade += smoothstep(cover, cover + 0.3, fbm(p + sdir * float(k)));\n"
-    "                shade /= 3.0;\n"
-    "                float lit = exp(-shade * 1.8);\n"
-    "                vec3 amb_c = mix(u_sky_top, u_sky_horizon, 0.5) * 0.9;\n"
-    "                vec3 sun_c = u_sun_color * (1.0 + low * 0.3) * (0.9 + 1.2 * pow(max(mu, 0.0), 6.0));\n"
-    "                vec3 cloud = amb_c * (0.75 + 0.25 * n) + sun_c * lit * 0.95;\n"
-    "                /* silver lining toward the sun */\n"
-    "                cloud += u_sun_color * pow(max(mu, 0.0), 24.0) * (1.0 - dens) * 2.0;\n"
-    "                cloud = mix(cloud, vec3(dot(cloud, vec3(0.33))) * vec3(0.55, 0.55, 0.7) + u_sky_horizon * 0.25, night * 0.7);\n"    "                cloud = mix(cloud, vec3(dot(cloud, vec3(0.3))) * (0.55 - 0.25 * n), u_rain * 0.8);\n"   /* rain clouds: grey and dark underneath */
-    "                cloud += vec3(0.8, 0.85, 1.0) * u_flash * (0.6 + n);\n"
-    "                float fade = smoothstep(0.015, 0.2, h) * exp(-t * 0.00003);\n"
-    "                col = mix(col, cloud, dens * fade * 0.92);\n"
-    "            }\n"
-    "        }\n"
-    "    } else {\n"
-    "        col = mix(u_sky_horizon, u_ground_color, clamp(-h * 4.0, 0.0, 1.0));\n"
-    "    }\n"
-    "    /* the sun disk (limb-darkened) by day, the moon (with maria) at night */\n"
-    "    float vis = smoothstep(-0.02, 0.01, h) * (1.0 - u_rain * 0.95);\n"   /* hidden behind rain clouds */
-    "    if (night < 0.5) {\n"
-    "        float cosr = 0.99985;\n"
-    "        if (mu > cosr - 0.00008) {\n"
-    "            float x = clamp((1.0 - mu) / (1.0 - cosr), 0.0, 1.0);\n"
-    "            float limb = 1.0 - 0.6 * (1.0 - sqrt(max(1.0 - x * x, 0.0)));\n"
-    "            col += u_sun_color * 22.0 * limb * smoothstep(1.06, 0.94, x) * vis;\n"
-    "        }\n"
-    "        col += u_sun_color * pow(max(mu, 0.0), 700.0) * 3.0 * vis;\n"
-    "    } else {\n"
-    "        float cosr = 0.99975;\n"
-    "        if (mu > cosr - 0.0001) {\n"
-    "            vec3 up = abs(to_sun.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);\n"
-    "            vec3 ax = normalize(cross(up, to_sun)), ay = cross(to_sun, ax);\n"
-    "            vec2 q = vec2(dot(dir, ax), dot(dir, ay)) / sqrt(1.0 - cosr * cosr);\n"
-    "            float rr = length(q);\n"
-    "            float maria = fbm(q * 2.5 + 11.0);\n"
-    "            vec3 mc = vec3(0.95, 0.95, 1.0) * (0.75 + 0.4 * smoothstep(0.55, 0.35, maria));\n"
-    "            col = mix(col, mc * 2.2, smoothstep(1.04, 0.96, rr) * vis);\n"
-    "        }\n"
-    "        col += vec3(0.6, 0.66, 0.9) * pow(max(mu, 0.0), 180.0) * 0.35 * vis;\n"
-    "    }\n"
-    "    col = mix(col, vec3(dot(col, vec3(0.3))) * 0.8, u_rain * 0.6) + vec3(0.6, 0.65, 0.8) * u_flash * 0.5;\n"
-    "    o_color = vec4(col, 1.0);\n"
+    "    o_color = vec4(a3_sky_eval(dir, u_camera_pos, u_sky_top, u_sky_horizon, u_ground_color, u_sun_dir, u_sun_color, u_time, u_clouds, u_rain, u_flash, 1.0), 1.0);\n"
     "}\n";
 
 const char *A3_SHADER_TONEMAP_FS =

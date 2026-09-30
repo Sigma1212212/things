@@ -629,6 +629,7 @@ static void set_frame_uniforms(A3RhiShader s, const A3RenderView *v, const Light
     a3_rhi_set_float(s, "u_wetness", a3_clampf(ws->wetness, 0.0f, 1.0f));
     a3_rhi_set_float(s, "u_rain", a3_clampf(ws->rain, 0.0f, 1.0f));
     a3_rhi_set_float(s, "u_flash", g_flash);
+    a3_rhi_set_float(s, "u_clouds", ws->cloud_cover);
     A3_UNUSED(ls);
 }
 
