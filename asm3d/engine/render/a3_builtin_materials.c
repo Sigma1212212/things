@@ -62,6 +62,7 @@ static const BuiltinMaterial g_builtins[] = {
       "    if (abs(n.y) > 0.6) { s.albedo = vec3(0.32, 0.31, 0.30) * (0.8 + 0.4 * a3_noise(s.world_pos * 2.0)); s.roughness = 0.95; return; }\n"
       "    vec3 t = normalize(cross(vec3(0.0, 1.0, 0.0), n));\n"
       "    float u = dot(s.world_pos, t), y = s.world_pos.y;\n"
+      "    s.normal = a3_bump(n, s.world_pos, a3_noise(s.world_pos * 5.0) * 0.004 + a3_noise(s.world_pos * 31.0) * 0.0012);\n"   /* stucco */
       "    vec2 cell = vec2(floor(u / 3.0), floor(y / 3.5));\n"
       "    vec2 f = vec2(fract(u / 3.0), fract(y / 3.5));\n"
       "    float win = step(0.18, f.x) * step(f.x, 0.82) * step(0.25, f.y) * step(f.y, 0.85) * step(1.0, y);\n"
@@ -148,6 +149,7 @@ static const BuiltinMaterial g_builtins[] = {
       "    float puddle = smoothstep(0.55, 0.62, a3_fbm(s.world_pos * 0.18 + 3.1));\n"
       "    s.roughness = mix(0.62, 0.06, puddle);\n"
       "    s.albedo *= mix(1.0, 0.55, puddle);\n"
+      "    s.normal = a3_bump(n, s.world_pos, (a3_noise(s.world_pos * 22.0) * 0.003 + g * 0.004) * (1.0 - puddle));\n"   /* asphalt grain; puddles are flat */
       "    if (n.y < 0.6 || plain > 0.5) return;\n"
       "    float x = s.local_pos.x, z = s.local_pos.z;\n"                         /* -0.5..0.5 across / along the road */
       "    float along = s.world_pos.x + s.world_pos.z;\n"                        /* roads run along world X or Z */
@@ -169,12 +171,16 @@ static const BuiltinMaterial g_builtins[] = {
       "    float slab = 0.94 + 0.12 * a3_h2(floor(s.world_pos.xz / 1.5));\n"
       "    s.albedo = s.color.rgb * slab * (0.85 + 0.2 * a3_noise(s.world_pos * 3.0) + 0.08 * a3_noise(s.world_pos * 17.0)) * (1.0 - joint * 0.4) * (1.0 - stain);\n"
       "    s.roughness = 0.8;\n"
+      "    vec2 jd = min(f, 1.0 - f) * 1.5;\n"                                   /* meters to the nearest joint */
+      "    float groove = 1.0 - smoothstep(0.0, 0.03, min(jd.x, jd.y));\n"
+      "    if (s.normal.y > 0.6) s.normal = a3_bump(normalize(s.normal), s.world_pos, -groove * 0.006 + a3_noise(s.world_pos * 25.0) * 0.001);\n"
       "}\n" },
     { "sand", "Beach sand with ripples. Base Color = sand tint.",
       "void a3_surface(inout A3Surface s) {\n"
       "    float r = sin(s.world_pos.x * 2.3 + a3_noise(s.world_pos * 0.5) * 6.0) * 0.5 + 0.5;\n"
       "    s.albedo = s.color.rgb * (0.88 + 0.12 * r + 0.1 * a3_noise(s.world_pos * 9.0));\n"
       "    s.roughness = 0.95;\n"
+      "    s.normal = a3_bump(normalize(s.normal), s.world_pos, r * 0.012 + a3_noise(s.world_pos * 9.0) * 0.004);\n"
       "}\n" },
     { "water", "Ocean / bay water: moving waves, very smooth, reflects the sky and the city (screen-space reflections). Base Color = deep water color.",
       "float a3_wave(vec2 p, float t) {\n"
